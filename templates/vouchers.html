@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}Vouchers{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12">
+        <h2>Vouchers</h2>
+
+        <form action="{{ url_for('admin.vouchers') }}" method="POST" class="row g-2 mb-4">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <div class="col-auto">
+                <input type="number" name="minutes" min="1" step="any" class="form-control" placeholder="Minutes" required>
+            </div>
+            <div class="col-auto">
+                <button type="submit" class="btn btn-primary">Create Voucher</button>
+            </div>
+            <div class="col-auto ms-auto">
+                {% if show_all %}
+                    <a href="{{ url_for('admin.vouchers') }}" class="btn btn-outline-secondary">Show unredeemed only</a>
+                {% else %}
+                    <a href="{{ url_for('admin.vouchers', all=1) }}" class="btn btn-outline-secondary">Show all</a>
+                {% endif %}
+            </div>
+        </form>
+
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>Code</th>
+                    <th>Minutes</th>
+                    <th>Created</th>
+                    <th>Redeemed By</th>
+                    <th>Redeemed At</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for v in vouchers %}
+                <tr>
+                    <td><code>{{ v.code }}</code></td>
+                    <td>{{ '%g'|format(v.minutes) }}</td>
+                    <td>{{ v.created_at }}</td>
+                    <td>{{ v.redeemed_by or '-' }}</td>
+                    <td>{{ v.redeemed_at or '-' }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="5" class="text-center text-muted">No vouchers</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

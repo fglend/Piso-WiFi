@@ -4,16 +4,43 @@ A Python-based PISO WIFI management system designed for Orange Pi One that enabl
 
 ## Features
 
-- Pay-per-use WiFi access (1 peso = 5 minutes)
-- MAC address-based device tracking and access control
-- Web-based admin interface for:
+- Pay-per-use WiFi access (configurable rate, default 1 peso = 5 minutes via `RATE_MINUTES_PER_PESO`)
+- MAC address-based device tracking and access control (dedicated `PISOWIFI` iptables chain)
+- Captive portal for users: view own balance/plan, redeem voucher codes, request premium upgrades
+- Web-based admin dashboard (login required) for:
   - Viewing connected devices
-  - Managing user time balances
+  - Managing user time balances and per-device bandwidth
+  - Managing plans (stored in the `plans` table) and approving upgrades
+  - Generating and tracking voucher codes
   - Monitoring transactions
+- Accurate time metering (exact elapsed-time deduction, clock persisted across restarts,
+  optional pause-on-disconnect)
+- Per-device QoS bandwidth limits via `tc` (HTB + ingress policing)
+- Network state reconciliation on startup: paying users keep access after a reboot
+- Security hardening: admin auth on all management routes, CSRF protection, MAC/input
+  validation, shell-free command execution, production refuses default credentials
 - Automatic access blocking when time expires
 - Transaction history and reporting
 - Containerized development environment
 - Production-ready deployment for Orange Pi One
+
+## Architecture
+
+```
+main.py                 Flask app factory (create_app)
+config.py               Typed settings loaded from .env
+services.py             Builds the single shared service instances
+auth.py                 Admin auth + CSRF protection
+routes/portal.py        User-facing captive portal (/, /redeem, /request_upgrade, /login)
+routes/admin.py         Admin dashboard and actions (/admin, /add_time, /vouchers, ...)
+user_manager.py         SQLite data layer (users, transactions, plans, vouchers, sessions)
+time_manager.py         Background metering thread
+network_controller.py   Facade over the network package
+network/ap_manager.py   hostapd/dnsmasq lifecycle + station discovery
+network/firewall.py     iptables access control (PISOWIFI chain)
+network/qos.py          tc bandwidth limits
+network/command.py      Shell-free subprocess execution
+```
 
 ## System Requirements
 
@@ -159,23 +186,47 @@ The admin interface will be available at `http://localhost:8000/admin`
 
 ## Configuration
 
-Key configuration options in `.env`:
+Copy `.env.example` to `.env` and adjust. Key options:
 
-- `WIFI_INTERFACE`: Name of your WiFi interface (default: wlan0)
+- `WIFI_INTERFACE` / `INTERNET_INTERFACE`: AP and uplink interfaces (default: wlan0 / wlan1)
 - `AP_SSID`: WiFi network name
-- `AP_PASSWORD`: WiFi password for admin access
-- `RATE_PESOS_PER_MINUTE`: Cost rate (default: 0.2)
-- `DATABASE_URL`: SQLite database path
+- `RATE_MINUTES_PER_PESO`: Minutes granted per peso (default: 5)
+- `DB_PATH`: SQLite database path (default: `config/piso_wifi.db`)
+- `SECRET_KEY`: Flask session key — **required in production**
+- `ADMIN_USERNAME` / `ADMIN_PASSWORD_HASH`: Admin credentials. Generate the hash with:
+  ```bash
+  python -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('yourpassword'))"
+  ```
+  (`ADMIN_PASSWORD` plaintext works as a fallback; the app refuses to start in
+  production with default credentials.)
+- `CHECK_INTERVAL`: Seconds between metering checks (default: 5)
+- `PAUSE_ON_DISCONNECT`: Freeze balances while a device is offline (default: true)
 
-## API Documentation
+## Web Interface
 
-The system provides a REST API for integration:
+- `/` — captive portal: the requesting device sees its own balance, can redeem
+  voucher codes and request a premium upgrade
+- `/login` — admin login
+- `/admin` — dashboard: connected devices, add/deduct time, plans, bandwidth
+- `/vouchers` — create and track voucher codes
+- `/transactions` — recent top-ups and voucher redemptions
 
-- `POST /api/v1/purchase`: Add credit to a device
-- `GET /api/v1/devices`: List connected devices
-- `GET /api/v1/balance`: Check remaining balance
+## Running Tests
 
-See the [API documentation](docs/api.md) for detailed endpoints and usage.
+```bash
+python -m pytest tests/ -v
+```
+
+The suite covers the data layer, metering logic, firewall/QoS command shapes
+(mocked — no root or hardware needed), route authorization, and CSRF.
+
+## Production Notes
+
+Run under gunicorn with a single worker (the AP/firewall state is per-process):
+
+```bash
+sudo gunicorn -w 1 -b 0.0.0.0:5000 'main:create_app()'
+```
 
 ## Contributing
 

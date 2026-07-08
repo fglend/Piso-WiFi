@@ -12,10 +12,12 @@
             <a class="navbar-brand" href="/">PISO WIFI</a>
             <div class="navbar-nav ms-auto">
                 {% if session.get('is_admin') %}
-                    <span class="nav-item nav-link text-light">Admin</span>
-                    <a class="nav-item nav-link" href="{{ url_for('logout') }}">Logout</a>
+                    <a class="nav-item nav-link" href="{{ url_for('admin.dashboard') }}">Dashboard</a>
+                    <a class="nav-item nav-link" href="{{ url_for('admin.vouchers') }}">Vouchers</a>
+                    <a class="nav-item nav-link" href="{{ url_for('admin.transactions') }}">Transactions</a>
+                    <a class="nav-item nav-link" href="{{ url_for('portal.logout') }}">Logout</a>
                 {% else %}
-                    <a class="nav-item nav-link" href="{{ url_for('login') }}">Admin Login</a>
+                    <a class="nav-item nav-link" href="{{ url_for('portal.login') }}">Admin Login</a>
                 {% endif %}
             </div>
         </div>
@@ -32,10 +34,10 @@
                 {% endfor %}
             {% endif %}
         {% endwith %}
-        
+
         {% block content %}{% endblock %}
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
-</html> 
+</html>

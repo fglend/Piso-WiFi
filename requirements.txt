@@ -1,12 +1,11 @@
 Flask==3.0.2
+python-dotenv==1.0.0
+netifaces==0.11.0
+psutil==5.9.8
+
+# Development / testing
 pytest==8.0.0
 pytest-flask==1.3.0
-netifaces==0.11.0
-python-iptables==1.0.0
 pytest-cov==4.1.0
 black==23.3.0
 flake8==6.1.0
-wireless==0.3.3
-psutil==5.9.8
-PyAccessPoint==0.2.5
-python-dotenv==1.0.0
