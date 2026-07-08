@@ -39,6 +39,38 @@
                         </tr>
                     </table>
 
+                    {% if coinslot_enabled %}
+                    <h5 class="mt-4">Buy Time with Coins</h5>
+                    <form action="{{ url_for('portal.insert_coin') }}" method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button type="submit" class="btn btn-warning">Insert Coin</button>
+                    </form>
+                    <div id="coin-status" class="mt-2 text-muted"></div>
+                    <script>
+                    (function () {
+                        var el = document.getElementById('coin-status');
+                        var hadSession = false;
+                        function poll() {
+                            fetch('{{ url_for('portal.coin_status') }}')
+                                .then(function (r) { return r.json(); })
+                                .then(function (s) {
+                                    if (s.active && s.yours) {
+                                        hadSession = true;
+                                        el.textContent = 'Insert coins now! ' + s.seconds_left +
+                                            's left - inserted: ₱' + s.pesos_inserted +
+                                            ' - balance: ' + s.balance.toFixed(1) + ' min';
+                                    } else if (s.active) {
+                                        el.textContent = 'Coinslot busy with another device...';
+                                    } else if (hadSession) {
+                                        location.reload();
+                                    }
+                                }).catch(function () {});
+                        }
+                        setInterval(poll, 2000);
+                    })();
+                    </script>
+                    {% endif %}
+
                     <h5 class="mt-4">Redeem a Voucher</h5>
                     <form action="{{ url_for('portal.redeem') }}" method="POST" class="row g-2">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

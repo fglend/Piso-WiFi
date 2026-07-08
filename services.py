@@ -33,6 +33,13 @@ class Services:
         self.time_manager = TimeManager(self.user_manager, self.network_controller,
                                         self.settings)
 
+        self.coinslot = None
+        if self.settings.coinslot_enabled:
+            from coinslot import CoinslotService
+            logger.info("Initializing coinslot service...")
+            self.coinslot = CoinslotService(self.user_manager,
+                                            self.network_controller, self.settings)
+
         if manage_hardware:
             self.network_controller.reconcile(self.user_manager.get_active_users())
 

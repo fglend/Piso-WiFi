@@ -9,6 +9,7 @@ import logging
 from network.ap_manager import APManager, is_valid_mac
 from network.firewall import Firewall
 from network.qos import QoSManager
+from network.wired import WiredGateway
 
 
 class NetworkController:
@@ -26,7 +27,8 @@ class NetworkController:
         self.ap_interface = settings.ap_interface
         self.internet_interface = settings.internet_interface
 
-        self.ap = APManager(settings)
+        backend = WiredGateway if settings.network_mode == 'wired' else APManager
+        self.ap = backend(settings)
         self.firewall = Firewall(settings.ap_interface, settings.internet_interface,
                                  settings.ap_ip)
         self.qos = QoSManager(settings.ap_interface,

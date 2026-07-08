@@ -36,11 +36,44 @@ routes/admin.py         Admin dashboard and actions (/admin, /add_time, /voucher
 user_manager.py         SQLite data layer (users, transactions, plans, vouchers, sessions)
 time_manager.py         Background metering thread
 network_controller.py   Facade over the network package
-network/ap_manager.py   hostapd/dnsmasq lifecycle + station discovery
+network/ap_manager.py   hostapd/dnsmasq lifecycle + station discovery (AP mode)
+network/wired.py        Wired gateway mode (external AP/PoE router in bridge mode)
 network/firewall.py     iptables access control (PISOWIFI chain)
 network/qos.py          tc bandwidth limits
 network/command.py      Shell-free subprocess execution
+coinslot.py             GPIO pulse coinslot service (CH-926 type)
 ```
+
+## Wired Gateway Setup (Orange Pi PC + PoE router)
+
+For boards without WiFi (e.g. Orange Pi PC) the Pi acts as a wired gateway:
+
+```
+Internet ── USB-to-LAN (eth1, INTERNET_INTERFACE) ── Orange Pi PC ── onboard Ethernet (eth0, LAN_INTERFACE) ── PoE switch/router (AP/bridge mode) ── clients
+```
+
+Set `NETWORK_MODE=wired` in `.env`. The Pi runs DHCP, the captive portal,
+per-MAC firewall rules and QoS on the LAN interface and NATs out the USB
+adapter. **The PoE router must be in Access Point (bridge) mode** — if it
+routes/NATs, the Pi only sees the router's MAC and per-device control breaks.
+Quick check: a connected phone should get an IP from the Pi's DHCP range
+(192.168.4.x by default), not from the router.
+
+## Coinslot
+
+A pulse-type coinslot (CH-926 style) wires its COIN line to a GPIO pin
+(`COINSLOT_GPIO`, sysfs number; PA6 = 6 on Orange Pi PC) and GND to GND.
+Flow: the user taps **Insert Coin** on the portal, which reserves the slot for
+their device for `COINSLOT_CLAIM_TIMEOUT` seconds; each peso pulse credits
+`RATE_MINUTES_PER_PESO` minutes to that device immediately and extends the
+window. Pulses with no active claim are ignored, so stray coins can't credit a
+random device. Configure the slot's pulses-per-peso to match
+`COINSLOT_PULSES_PER_PESO`.
+
+> Note: if the coinslot runs on 12V, power it from the 12V side of your
+> step-down converter and make sure the COIN signal line is pulled to 3.3V
+> levels (open-collector output + pull-up to 3.3V), never 5V/12V directly into
+> the GPIO.
 
 ## System Requirements
 

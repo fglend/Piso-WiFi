@@ -28,6 +28,9 @@ def create_app(services=None, start_time_manager=True):
         if start_time_manager:
             logger.info("Starting time manager...")
             services.time_manager.start()
+            if services.coinslot:
+                logger.info("Starting coinslot service...")
+                services.coinslot.start()
 
     app = Flask(__name__)
     app.secret_key = services.settings.secret_key

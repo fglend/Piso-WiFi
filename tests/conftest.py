@@ -48,7 +48,7 @@ def mock_network(settings):
 def services(settings, user_manager, mock_network):
     return SimpleNamespace(settings=settings, user_manager=user_manager,
                            network_controller=mock_network,
-                           time_manager=MagicMock())
+                           time_manager=MagicMock(), coinslot=None)
 
 
 @pytest.fixture

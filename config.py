@@ -48,7 +48,14 @@ class Settings:
     db_path: str = field(default_factory=lambda: os.getenv('DB_PATH', 'config/piso_wifi.db'))
 
     # Network
-    ap_interface: str = field(default_factory=lambda: os.getenv('WIFI_INTERFACE', 'wlan0'))
+    # 'wired': the Pi is a wired gateway (clients come in via an external AP /
+    # PoE router in bridge mode on the LAN interface). 'ap': the Pi broadcasts
+    # its own hotspot with hostapd.
+    network_mode: str = field(default_factory=lambda: os.getenv('NETWORK_MODE', 'ap'))
+    # Client-side interface. LAN_INTERFACE wins (wired setups); falls back to
+    # WIFI_INTERFACE for AP mode.
+    ap_interface: str = field(default_factory=lambda: os.getenv(
+        'LAN_INTERFACE', os.getenv('WIFI_INTERFACE', 'wlan0')))
     internet_interface: str = field(default_factory=lambda: os.getenv('INTERNET_INTERFACE', 'wlan1'))
     ap_ssid: str = field(default_factory=lambda: os.getenv('AP_SSID', 'PisoWiFi'))
     ap_password: str = field(default_factory=lambda: os.getenv('AP_PASSWORD', 'pisowifi123'))
@@ -61,6 +68,17 @@ class Settings:
     check_interval: int = field(default_factory=lambda: _env_int('CHECK_INTERVAL', 5))
     pause_on_disconnect: bool = field(
         default_factory=lambda: os.getenv('PAUSE_ON_DISCONNECT', 'true').lower() in ('1', 'true', 'yes'))
+
+    # Coinslot (GPIO pulse type, e.g. CH-926)
+    coinslot_enabled: bool = field(
+        default_factory=lambda: os.getenv('COINSLOT_ENABLED', 'false').lower() in ('1', 'true', 'yes'))
+    coinslot_gpio: int = field(default_factory=lambda: _env_int('COINSLOT_GPIO', 6))
+    coinslot_pulses_per_peso: int = field(
+        default_factory=lambda: _env_int('COINSLOT_PULSES_PER_PESO', 1))
+    coinslot_claim_timeout: int = field(
+        default_factory=lambda: _env_int('COINSLOT_CLAIM_TIMEOUT', 60))
+    coinslot_debounce_ms: int = field(
+        default_factory=lambda: _env_int('COINSLOT_DEBOUNCE_MS', 50))
 
     @property
     def is_production(self):

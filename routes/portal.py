@@ -3,8 +3,8 @@ upgrades. The device is always identified by the requesting IP - clients can
 never act on another device's MAC."""
 import logging
 
-from flask import (Blueprint, current_app, flash, redirect, render_template,
-                   request, session, url_for)
+from flask import (Blueprint, current_app, flash, jsonify, redirect,
+                   render_template, request, session, url_for)
 
 from auth import verify_admin
 
@@ -42,7 +42,8 @@ def index():
             'plan': 'default', 'upgrade_requested': False,
         }
         device = {'mac_address': mac, **info}
-    return render_template('portal.html', device=device)
+    return render_template('portal.html', device=device,
+                           coinslot_enabled=svc.coinslot is not None)
 
 
 @portal_bp.route('/login', methods=['GET', 'POST'])
@@ -89,6 +90,36 @@ def redeem():
                 mac, info['download_limit'], info['upload_limit'])
         flash(f'Voucher accepted: {minutes:g} minutes added', 'success')
     return redirect(url_for('portal.index'))
+
+
+@portal_bp.route('/insert_coin', methods=['POST'])
+def insert_coin():
+    svc = _services()
+    if not svc.coinslot:
+        flash('Coinslot is not available', 'error')
+        return redirect(url_for('portal.index'))
+    mac = _client_mac()
+    if not mac:
+        flash('Could not identify your device. Reconnect to the WiFi and try again.', 'error')
+        return redirect(url_for('portal.index'))
+
+    window = svc.coinslot.claim(mac)
+    if window is None:
+        flash('The coinslot is in use by another device. Try again shortly.', 'error')
+    else:
+        flash(f'Coinslot is yours for {window} seconds - insert coins now!', 'success')
+    return redirect(url_for('portal.index'))
+
+
+@portal_bp.route('/coin_status')
+def coin_status():
+    svc = _services()
+    if not svc.coinslot:
+        return jsonify({'enabled': False})
+    mac = _client_mac()
+    balance = svc.user_manager.check_balance(mac) if mac else 0
+    return jsonify({'enabled': True, 'balance': balance,
+                    **svc.coinslot.status(mac)})
 
 
 @portal_bp.route('/request_upgrade', methods=['POST'])
