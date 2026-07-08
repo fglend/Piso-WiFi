@@ -61,19 +61,37 @@ Quick check: a connected phone should get an IP from the Pi's DHCP range
 
 ## Coinslot
 
-A pulse-type coinslot (CH-926 style) wires its COIN line to a GPIO pin
-(`COINSLOT_GPIO`, sysfs number; PA6 = 6 on Orange Pi PC) and GND to GND.
+A pulse-type coinslot (CH-926 / Weiyu universal style) wires its SIG/COIN line
+to a GPIO pin (`COINSLOT_GPIO`, sysfs number; PA6 = 6 on Orange Pi PC) and GND
+to GND. The acceptor's 12V feed runs through a relay (`COINSLOT_RELAY_GPIO`,
+sysfs number; PA7 = 7 on Orange Pi PC) instead of straight to the supply, so
+the acceptor is only **electrically powered** while a claim is active - not
+just software-gated.
+
 Flow: the user taps **Insert Coin** on the portal, which reserves the slot for
-their device for `COINSLOT_CLAIM_TIMEOUT` seconds; each peso pulse credits
-`RATE_MINUTES_PER_PESO` minutes to that device immediately and extends the
-window. Pulses with no active claim are ignored, so stray coins can't credit a
-random device. Configure the slot's pulses-per-peso to match
+their device for `COINSLOT_CLAIM_TIMEOUT` seconds and energizes the relay;
+each peso pulse credits `RATE_MINUTES_PER_PESO` minutes to that device
+immediately and extends the window. When the window expires (or the service
+stops), the relay de-energizes and the acceptor goes dead again. Pulses
+arriving with no active claim are additionally ignored in software, so stray
+coins during the narrow race at claim expiry still can't credit a random
+device. Configure the slot's pulses-per-peso to match
 `COINSLOT_PULSES_PER_PESO`.
 
+Wire the relay's **NO (normally-open) + COM** contacts in series with the
+acceptor's 12V line - not NC. That way a de-energized relay (app not running,
+mid-boot, crashed) means the contact is open and the acceptor has no power at
+all, rather than defaulting to "accepting coins nobody gets credited for."
+Set `COINSLOT_RELAY_ACTIVE_HIGH=true` only if your relay board energizes on a
+HIGH signal; most cheap opto-isolated boards are active-low (the default).
+
 > Note: if the coinslot runs on 12V, power it from the 12V side of your
-> step-down converter and make sure the COIN signal line is pulled to 3.3V
-> levels (open-collector output + pull-up to 3.3V), never 5V/12V directly into
-> the GPIO.
+> step-down converter and make sure the COIN/SIG signal line is pulled to
+> 3.3V levels (open-collector output + pull-up to 3.3V), never 5V/12V directly
+> into the GPIO. Before wiring the relay permanently, verify its control pin
+> reads low across a few power cycles (multimeter or `cat
+> /sys/class/gpio/gpio7/value` right after boot) so a boot-time GPIO glitch
+> can't unexpectedly energize it.
 
 ## System Requirements
 

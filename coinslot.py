@@ -1,9 +1,13 @@
-"""GPIO pulse coinslot (CH-926 style: N pulses per peso on a falling edge).
+"""GPIO pulse coinslot (CH-926 / Weiyu universal style: N pulses per peso on
+a falling edge).
 
 Flow: a user taps "Insert Coin" on the portal, which claims the slot for
-their MAC for a limited window. Pulses arriving while a claim is active are
-credited to that MAC immediately; pulses with no active claim are logged and
-ignored (so stray coins can't credit a random device).
+their MAC for a limited window and energizes a relay that powers the
+acceptor. Pulses arriving while a claim is active are credited to that MAC
+immediately; pulses with no active claim are logged and ignored (belt and
+suspenders - the relay should already have cut the acceptor's power by
+then). The relay de-energizes on expiry or shutdown, so the acceptor is
+electrically dead outside of an active claim window.
 """
 import logging
 import os
@@ -59,19 +63,70 @@ class SysfsGpioReader:
         return True
 
 
+class SysfsGpioRelay:
+    """Output-only sysfs GPIO pin driving a relay (or any on/off actuator).
+
+    Defaults to "off" the moment the pin is exported, before this process
+    (or a future one) ever calls set() - a crash or a slow app start leaves
+    the relay de-energized rather than in an undefined state.
+    """
+
+    def __init__(self, pin, active_high=False):
+        self.pin = pin
+        self.active_high = active_high
+
+    def _write(self, path, value):
+        with open(path, 'w') as f:
+            f.write(value)
+
+    def open(self):
+        pin_dir = f'{GPIO_ROOT}/gpio{self.pin}'
+        if not os.path.isdir(pin_dir):
+            self._write(f'{GPIO_ROOT}/export', str(self.pin))
+            time.sleep(0.1)
+        # 'low'/'high' set direction=out AND an initial value atomically,
+        # so there's no window where the pin is an output with whatever
+        # value it happened to power up with.
+        self._write(f'{pin_dir}/direction', 'high' if self.active_high else 'low')
+        self.set(False)
+
+    def set(self, active):
+        value = active if self.active_high else not active
+        self._write(f'{GPIO_ROOT}/gpio{self.pin}/value', '1' if value else '0')
+
+    def close(self):
+        self.set(False)
+        pin_dir = f'{GPIO_ROOT}/gpio{self.pin}'
+        if os.path.isdir(pin_dir):
+            self._write(f'{GPIO_ROOT}/unexport', str(self.pin))
+
+
 class CoinslotService:
-    def __init__(self, user_manager, network_controller, settings, reader=None):
+    def __init__(self, user_manager, network_controller, settings, reader=None, relay=None):
         self.user_manager = user_manager
         self.network_controller = network_controller
         self.settings = settings
         self.reader = reader or SysfsGpioReader(settings.coinslot_gpio,
                                                 settings.coinslot_debounce_ms)
+        self.relay = relay or SysfsGpioRelay(settings.coinslot_relay_gpio,
+                                             settings.coinslot_relay_active_high)
         self.logger = logger
         self.running = False
         self.thread = None
         self._lock = threading.Lock()
         # active claim: {'mac': str, 'expires': float, 'pulses': int, 'pesos': float}
         self._claim = None
+        self._relay_on = False
+
+    # --- relay ---------------------------------------------------------
+
+    def _set_relay(self, active):
+        """Energize/de-energize the acceptor's power relay (no-op if unchanged)."""
+        if active == self._relay_on:
+            return
+        self.relay.set(active)
+        self._relay_on = active
+        self.logger.info(f"Coinslot relay {'energized' if active else 'de-energized'}")
 
     # --- portal API -------------------------------------------------------
 
@@ -88,6 +143,7 @@ class CoinslotService:
             self._claim = {'mac': mac_address,
                            'expires': now + self.settings.coinslot_claim_timeout,
                            'pulses': 0, 'pesos': 0.0}
+            self._set_relay(True)
             self.logger.info(f"Coinslot claimed by {mac_address}")
             return self.settings.coinslot_claim_timeout
 
@@ -133,24 +189,36 @@ class CoinslotService:
         else:
             self.logger.error(f"Failed to credit coin for {mac}")
 
+    def _expire_claim_if_due(self):
+        with self._lock:
+            if self._claim and self._claim['expires'] <= time.monotonic():
+                self._claim = None
+                self._set_relay(False)
+
     def _run(self):
         while self.running:
             try:
                 if self.reader.wait_pulse(timeout=1.0):
                     self._on_pulse()
+                self._expire_claim_if_due()
             except Exception as e:
                 self.logger.error(f"Coinslot error: {e}")
                 time.sleep(1)
 
     def start(self):
+        self.relay.open()
         self.reader.open()
         self.running = True
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
-        self.logger.info(f"Coinslot service started (GPIO {self.settings.coinslot_gpio})")
+        self.logger.info(
+            f"Coinslot service started (SIG GPIO {self.settings.coinslot_gpio}, "
+            f"relay GPIO {self.settings.coinslot_relay_gpio})")
 
     def stop(self):
         self.running = False
         if self.thread:
             self.thread.join(timeout=3)
         self.reader.close()
+        self._set_relay(False)
+        self.relay.close()

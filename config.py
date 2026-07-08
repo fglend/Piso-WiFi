@@ -88,7 +88,7 @@ class Settings:
     check_interval: int = field(default_factory=lambda: _env_int('CHECK_INTERVAL', 5))
     pause_on_disconnect: bool = field(default_factory=lambda: _env_bool('PAUSE_ON_DISCONNECT', True))
 
-    # Coinslot (GPIO pulse type, e.g. CH-926)
+    # Coinslot (GPIO pulse type, e.g. CH-926 / Weiyu universal)
     coinslot_enabled: bool = field(default_factory=lambda: _env_bool('COINSLOT_ENABLED', False))
     coinslot_gpio: int = field(default_factory=lambda: _env_int('COINSLOT_GPIO', 6))
     coinslot_pulses_per_peso: int = field(
@@ -97,6 +97,13 @@ class Settings:
         default_factory=lambda: _env_int('COINSLOT_CLAIM_TIMEOUT', 60))
     coinslot_debounce_ms: int = field(
         default_factory=lambda: _env_int('COINSLOT_DEBOUNCE_MS', 50))
+    # Relay that switches power to the acceptor: energized only while a claim
+    # is active, so the acceptor is electrically dead the rest of the time.
+    coinslot_relay_gpio: int = field(default_factory=lambda: _env_int('COINSLOT_RELAY_GPIO', 7))
+    # Most cheap opto-isolated relay boards trigger the relay when IN is
+    # pulled LOW ("active low"). Set true only if yours energizes on HIGH.
+    coinslot_relay_active_high: bool = field(
+        default_factory=lambda: _env_bool('COINSLOT_RELAY_ACTIVE_HIGH', False))
 
     @property
     def is_production(self):

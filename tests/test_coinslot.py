@@ -16,8 +16,23 @@ class FakeReader:
         return False
 
 
-def make_service(user_manager, mock_network, settings):
-    return CoinslotService(user_manager, mock_network, settings, reader=FakeReader())
+class FakeRelay:
+    def __init__(self):
+        self.active = None  # None until open() runs, then True/False
+
+    def open(self):
+        self.active = False
+
+    def set(self, active):
+        self.active = active
+
+    def close(self):
+        self.active = False
+
+
+def make_service(user_manager, mock_network, settings, relay=None):
+    return CoinslotService(user_manager, mock_network, settings,
+                           reader=FakeReader(), relay=relay or FakeRelay())
 
 
 def test_pulse_without_claim_is_ignored(user_manager, mock_network, settings):
@@ -67,6 +82,37 @@ def test_pulses_per_peso(user_manager, mock_network, settings):
     assert user_manager.check_balance(MAC) == 0  # half a peso: no credit yet
     svc._on_pulse()
     assert user_manager.check_balance(MAC) == 5
+
+
+def test_relay_energizes_on_claim(user_manager, mock_network, settings):
+    relay = FakeRelay()
+    svc = make_service(user_manager, mock_network, settings, relay=relay)
+    assert relay.active is None  # not yet opened
+    svc.claim(MAC)
+    assert relay.active is True
+
+
+def test_relay_de_energizes_when_expiry_is_swept(user_manager, mock_network, settings):
+    relay = FakeRelay()
+    svc = make_service(user_manager, mock_network, settings, relay=relay)
+    svc.claim(MAC)
+    assert relay.active is True
+
+    svc._claim['expires'] = 0  # force expiry
+    svc._expire_claim_if_due()  # what the _run() poll loop calls each tick
+    assert relay.active is False
+    assert svc.status(MAC) == {'active': False}
+
+
+def test_relay_de_energizes_on_stop(user_manager, mock_network, settings):
+    relay = FakeRelay()
+    svc = make_service(user_manager, mock_network, settings, relay=relay)
+    svc.claim(MAC)
+    assert relay.active is True
+
+    svc.start()
+    svc.stop()
+    assert relay.active is False
 
 
 def test_wired_gateway_station_discovery(settings):
