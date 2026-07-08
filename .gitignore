@@ -2,3 +2,15 @@
 config/piso_wifi.db
 venv
 .env
+
+/mcp-configs
+/rules
+/skills
+/tests/
+!/tests/Feature
+!/tests/Unit
+/hooks
+/commands
+.agents
+.codex
+.superpowers

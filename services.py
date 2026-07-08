@@ -21,6 +21,7 @@ class Services:
 
         logger.info("Initializing user manager...")
         self.user_manager = UserManager(self.settings.db_path)
+        self.refresh_runtime_settings()
 
         logger.info("Initializing network controller...")
         self.network_controller = self._init_network_controller(manage_hardware)
@@ -42,6 +43,30 @@ class Services:
 
         if manage_hardware:
             self.network_controller.reconcile(self.user_manager.get_active_users())
+
+    def app_setting_defaults(self):
+        return {
+            'minutes_per_peso': str(self.settings.minutes_per_peso),
+            'coinslot_claim_timeout': str(self.settings.coinslot_claim_timeout),
+            'coinslot_pulses_per_peso': str(self.settings.coinslot_pulses_per_peso),
+            'portal_title': self.settings.portal_title,
+            'portal_subtitle': self.settings.portal_subtitle,
+            'dashboard_refresh_seconds': str(self.settings.dashboard_refresh_seconds),
+            'default_download_kbps': str(self.settings.default_download_kbps),
+            'default_upload_kbps': str(self.settings.default_upload_kbps),
+        }
+
+    def refresh_runtime_settings(self):
+        values = self.user_manager.get_app_settings(self.app_setting_defaults())
+        self.settings.minutes_per_peso = float(values['minutes_per_peso'])
+        self.settings.coinslot_claim_timeout = int(values['coinslot_claim_timeout'])
+        self.settings.coinslot_pulses_per_peso = int(values['coinslot_pulses_per_peso'])
+        self.settings.portal_title = values['portal_title']
+        self.settings.portal_subtitle = values['portal_subtitle']
+        self.settings.dashboard_refresh_seconds = int(values['dashboard_refresh_seconds'])
+        self.settings.default_download_kbps = int(values['default_download_kbps'])
+        self.settings.default_upload_kbps = int(values['default_upload_kbps'])
+        return values
 
     def _init_network_controller(self, manage_hardware, max_retries=3):
         last_error = None

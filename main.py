@@ -13,7 +13,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def create_app(services=None, start_time_manager=True):
+def create_app(services=None, start_time_manager=True, manage_hardware=True, settings=None):
     """Application factory.
 
     services: pre-built Services container (tests pass one with
@@ -24,7 +24,7 @@ def create_app(services=None, start_time_manager=True):
 
     if services is None:
         from services import Services
-        services = Services()
+        services = Services(settings=settings, manage_hardware=manage_hardware)
         if start_time_manager:
             logger.info("Starting time manager...")
             services.time_manager.start()
@@ -47,7 +47,11 @@ if __name__ == '__main__':
     try:
         logger.info("Starting PISO WIFI application...")
         settings = load_settings()
-        app = create_app()
+        app = create_app(
+            start_time_manager=settings.manage_hardware,
+            manage_hardware=settings.manage_hardware,
+            settings=settings,
+        )
         app.run(host=settings.host, port=settings.port,
                 debug=not settings.is_production, use_reloader=False)
     except Exception as e:

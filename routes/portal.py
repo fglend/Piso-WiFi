@@ -20,10 +20,18 @@ def _client_mac():
     """Resolve the requesting device's MAC from its IP."""
     ip = request.remote_addr
     try:
-        return _services().network_controller.resolve_mac(ip)
+        services = _services()
+        mac = services.network_controller.resolve_mac(ip)
+        if mac:
+            return mac
+        settings = services.settings
+        if not settings.is_production and not settings.manage_hardware:
+            fake_mac = settings.dev_fake_mac.upper()
+            if services.network_controller.is_valid_mac(fake_mac):
+                return fake_mac
     except Exception as e:
         logger.debug(f"Could not resolve MAC for {ip}: {e}")
-        return None
+    return None
 
 
 @portal_bp.route('/')
@@ -32,18 +40,26 @@ def index():
         return redirect(url_for('admin.dashboard'))
 
     svc = _services()
+    svc.refresh_runtime_settings()
     mac = _client_mac()
     device = None
     if mac:
         info = svc.user_manager.get_device_info(mac) or {
             'time_balance': 0, 'status': 'inactive',
-            'download_limit': svc.network_controller.DEFAULT_DOWNLOAD_SPEED,
-            'upload_limit': svc.network_controller.DEFAULT_UPLOAD_SPEED,
+            'download_limit': svc.settings.default_download_kbps,
+            'upload_limit': svc.settings.default_upload_kbps,
             'plan': 'default', 'upgrade_requested': False,
         }
         device = {'mac_address': mac, **info}
-    return render_template('portal.html', device=device,
-                           coinslot_enabled=svc.coinslot is not None)
+    return render_template(
+        'portal.html',
+        device=device,
+        coinslot_enabled=svc.coinslot is not None,
+        coin_minutes_per_peso=svc.settings.minutes_per_peso,
+        coin_claim_timeout=svc.settings.coinslot_claim_timeout,
+        portal_title=svc.settings.portal_title,
+        portal_subtitle=svc.settings.portal_subtitle,
+    )
 
 
 @portal_bp.route('/login', methods=['GET', 'POST'])
@@ -95,6 +111,7 @@ def redeem():
 @portal_bp.route('/insert_coin', methods=['POST'])
 def insert_coin():
     svc = _services()
+    svc.refresh_runtime_settings()
     if not svc.coinslot:
         flash('Coinslot is not available', 'error')
         return redirect(url_for('portal.index'))

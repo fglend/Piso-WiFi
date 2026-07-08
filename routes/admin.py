@@ -37,37 +37,117 @@ def _form_number(name, minimum=None, maximum=None, cast=int):
     return value
 
 
+def _dashboard_devices(svc):
+    default_download = svc.settings.default_download_kbps
+    default_upload = svc.settings.default_upload_kbps
+    devices = svc.network_controller.get_connected_devices()
+    for device in devices:
+        mac = device['mac_address']
+        info = svc.user_manager.get_device_info(mac)
+        if info:
+            device.update(info)
+        else:
+            device.update({
+                'time_balance': 0,
+                'download_limit': default_download,
+                'upload_limit': default_upload,
+                'plan': 'default',
+                'upgrade_requested': False,
+            })
+    return devices
+
+
+def _form_text(name, default='', maximum=120):
+    value = (request.form.get(name) or default).strip()
+    return value[:maximum]
+
+
 @admin_bp.route('/admin')
 @admin_required
 def dashboard():
     svc = _services()
     try:
-        devices = svc.network_controller.get_connected_devices()
-        for device in devices:
-            mac = device['mac_address']
-            info = svc.user_manager.get_device_info(mac)
-            if info:
-                device.update(info)
-            else:
-                device.update({
-                    'time_balance': 0,
-                    'download_limit': svc.network_controller.DEFAULT_DOWNLOAD_SPEED,
-                    'upload_limit': svc.network_controller.DEFAULT_UPLOAD_SPEED,
-                    'plan': 'default',
-                    'upgrade_requested': False,
-                })
+        app_settings = svc.refresh_runtime_settings()
+        devices = _dashboard_devices(svc)
+        active_device_count = len([
+            device for device in devices if device.get('time_balance', 0) > 0
+        ])
         plans = svc.user_manager.get_plans()
+        revenue = svc.user_manager.get_revenue_summary()
         return render_template('admin.html', devices=devices, plans=plans,
-                               minutes_per_peso=svc.settings.minutes_per_peso)
+                               minutes_per_peso=svc.settings.minutes_per_peso,
+                               revenue=revenue,
+                               app_settings=app_settings,
+                               active_device_count=active_device_count)
     except Exception as e:
         logger.error(f"Error in admin dashboard: {e}")
         return "Internal Server Error", 500
+
+
+@admin_bp.route('/admin/live')
+@admin_required
+def dashboard_live():
+    svc = _services()
+    svc.refresh_runtime_settings()
+    devices = _dashboard_devices(svc)
+    revenue = svc.user_manager.get_revenue_summary()
+    active_devices = [device for device in devices if device.get('time_balance', 0) > 0]
+    return jsonify({
+        'revenue': revenue,
+        'device_count': len(devices),
+        'active_device_count': len(active_devices),
+        'minutes_per_peso': svc.settings.minutes_per_peso,
+    })
+
+
+@admin_bp.route('/admin/settings', methods=['POST'])
+@admin_required
+def update_settings():
+    svc = _services()
+    minutes_per_peso = _form_number('minutes_per_peso', minimum=1, maximum=240, cast=float)
+    claim_timeout = _form_number('coinslot_claim_timeout', minimum=10, maximum=600)
+    pulses_per_peso = _form_number('coinslot_pulses_per_peso', minimum=1, maximum=20)
+    refresh_seconds = _form_number('dashboard_refresh_seconds', minimum=3, maximum=120)
+    default_download = _form_number('default_download_kbps', minimum=32, maximum=100000)
+    default_upload = _form_number('default_upload_kbps', minimum=32, maximum=100000)
+
+    if None in (
+        minutes_per_peso, claim_timeout, pulses_per_peso,
+        refresh_seconds, default_download, default_upload,
+    ):
+        flash('Settings must use valid numbers within the allowed ranges', 'error')
+        return redirect(url_for('admin.dashboard'))
+
+    values = {
+        'minutes_per_peso': minutes_per_peso,
+        'coinslot_claim_timeout': claim_timeout,
+        'coinslot_pulses_per_peso': pulses_per_peso,
+        'portal_title': _form_text('portal_title', default='PISO WIFI Portal'),
+        'portal_subtitle': _form_text(
+            'portal_subtitle',
+            default='Only one phone can use the coin slot at a time.',
+            maximum=180,
+        ),
+        'dashboard_refresh_seconds': refresh_seconds,
+        'default_download_kbps': default_download,
+        'default_upload_kbps': default_upload,
+    }
+
+    settings_saved = svc.user_manager.update_app_settings(values)
+    plan_saved = svc.user_manager.upsert_plan('default', default_download, default_upload)
+    if settings_saved and plan_saved:
+        svc.refresh_runtime_settings()
+        flash('System settings updated', 'success')
+    else:
+        flash('Error updating system settings', 'error')
+    return redirect(url_for('admin.dashboard'))
 
 
 @admin_bp.route('/add_time', methods=['POST'])
 @admin_required
 def add_time():
     svc = _services()
+    svc.refresh_runtime_settings()
     mac = _form_mac()
     amount = _form_number('amount', minimum=1)
     if not mac or amount is None:
@@ -114,6 +194,7 @@ def deduct_time():
 @admin_required
 def set_bandwidth():
     svc = _services()
+    svc.refresh_runtime_settings()
     mac = _form_mac()
     download = _form_number('download', minimum=32, maximum=100000)
     upload = _form_number('upload', minimum=32, maximum=100000)

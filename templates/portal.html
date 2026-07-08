@@ -3,99 +3,426 @@
 {% block title %}Portal{% endblock %}
 
 {% block content %}
-<div class="row justify-content-center">
-    <div class="col-md-8">
-        <div class="card">
-            <div class="card-header">
-                <h3 class="text-center">Welcome to PISO WIFI</h3>
+<style>
+    .portal-shell {
+        max-width: 980px;
+        margin: 0 auto;
+    }
+
+    .status-band {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.75rem;
+    }
+
+    .metric {
+        border: 1px solid rgba(0, 0, 0, 0.08);
+        border-radius: 0.5rem;
+        padding: 1rem;
+        background: #fff;
+        min-height: 6rem;
+    }
+
+    .metric-label {
+        color: #6c757d;
+        font-size: 0.82rem;
+        text-transform: uppercase;
+        letter-spacing: 0;
+    }
+
+    .metric-value {
+        font-size: clamp(1.35rem, 4vw, 2rem);
+        font-weight: 700;
+        line-height: 1.15;
+    }
+
+    .coin-panel {
+        border: 1px solid rgba(0, 0, 0, 0.08);
+        border-radius: 0.5rem;
+        background: #fff;
+        overflow: hidden;
+    }
+
+    .coin-panel-header {
+        display: flex;
+        justify-content: space-between;
+        gap: 1rem;
+        align-items: center;
+        padding: 1rem;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+        background: #f8f9fa;
+    }
+
+    .coin-steps {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 0.75rem;
+        padding: 1rem;
+    }
+
+    .coin-step {
+        border: 1px solid rgba(0, 0, 0, 0.08);
+        border-radius: 0.5rem;
+        padding: 0.85rem;
+        min-height: 8rem;
+        background: #fff;
+    }
+
+    .coin-step.is-active {
+        border-color: #ffc107;
+        box-shadow: 0 0 0 0.18rem rgba(255, 193, 7, 0.22);
+    }
+
+    .coin-step.is-done {
+        border-color: #198754;
+        background: #f1fbf6;
+    }
+
+    .step-number {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.75rem;
+        height: 1.75rem;
+        border-radius: 50%;
+        background: #212529;
+        color: #fff;
+        font-weight: 700;
+        margin-bottom: 0.65rem;
+    }
+
+    .coin-step.is-done .step-number {
+        background: #198754;
+    }
+
+    .coin-step.is-active .step-number {
+        background: #ffc107;
+        color: #212529;
+    }
+
+    .coin-live {
+        display: grid;
+        grid-template-columns: 1.4fr 1fr;
+        gap: 1rem;
+        padding: 0 1rem 1rem;
+        align-items: stretch;
+    }
+
+    .coin-live-box {
+        border: 1px solid rgba(0, 0, 0, 0.08);
+        border-radius: 0.5rem;
+        padding: 1rem;
+        background: #fff;
+    }
+
+    @media (max-width: 768px) {
+        .status-band,
+        .coin-live {
+            grid-template-columns: 1fr;
+        }
+
+        .coin-steps {
+            grid-template-columns: 1fr;
+        }
+
+        .coin-panel-header {
+            align-items: flex-start;
+            flex-direction: column;
+        }
+    }
+</style>
+
+<div class="portal-shell">
+    {% if device %}
+        <div class="d-flex flex-column flex-md-row justify-content-between gap-3 align-items-md-center mb-3">
+            <div>
+                <p class="text-muted mb-1">Connected device</p>
+                <h1 class="h3 mb-0">{{ portal_title }}</h1>
+                <div class="text-muted small text-break">{{ device.mac_address }}</div>
             </div>
-            <div class="card-body">
-                {% if device %}
-                    <table class="table">
-                        <tr><th>Your Device</th><td>{{ device.mac_address }}</td></tr>
-                        <tr>
-                            <th>Time Balance</th>
-                            <td>
-                                <strong>{{ '%.1f'|format(device.time_balance) }} minutes</strong>
-                                {% if device.time_balance <= 0 %}
-                                    <span class="badge bg-danger">No access</span>
-                                {% else %}
-                                    <span class="badge bg-success">Active</span>
-                                {% endif %}
-                            </td>
-                        </tr>
-                        <tr>
-                            <th>Plan</th>
-                            <td>
-                                {% if device.plan == 'premium' %}
-                                    <span class="badge bg-success">Premium</span>
-                                {% else %}
-                                    <span class="badge bg-secondary">Default</span>
-                                {% endif %}
-                                <small class="text-muted d-block">
-                                    {{ device.download_limit }} kbps down / {{ device.upload_limit }} kbps up
-                                </small>
-                            </td>
-                        </tr>
-                    </table>
+            {% if device.time_balance <= 0 %}
+                <span class="badge text-bg-danger align-self-start align-self-md-center">No internet access</span>
+            {% else %}
+                <span class="badge text-bg-success align-self-start align-self-md-center">Internet active</span>
+            {% endif %}
+        </div>
 
-                    {% if coinslot_enabled %}
-                    <h5 class="mt-4">Buy Time with Coins</h5>
-                    <form action="{{ url_for('portal.insert_coin') }}" method="POST">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                        <button type="submit" class="btn btn-warning">Insert Coin</button>
-                    </form>
-                    <div id="coin-status" class="mt-2 text-muted"></div>
-                    <script>
-                    (function () {
-                        var el = document.getElementById('coin-status');
-                        var hadSession = false;
-                        function poll() {
-                            fetch('{{ url_for('portal.coin_status') }}')
-                                .then(function (r) { return r.json(); })
-                                .then(function (s) {
-                                    if (s.active && s.yours) {
-                                        hadSession = true;
-                                        el.textContent = 'Insert coins now! ' + s.seconds_left +
-                                            's left - inserted: ₱' + s.pesos_inserted +
-                                            ' - balance: ' + s.balance.toFixed(1) + ' min';
-                                    } else if (s.active) {
-                                        el.textContent = 'Coinslot busy with another device...';
-                                    } else if (hadSession) {
-                                        location.reload();
-                                    }
-                                }).catch(function () {});
-                        }
-                        setInterval(poll, 2000);
-                    })();
-                    </script>
-                    {% endif %}
+        <div class="status-band mb-4">
+            <div class="metric">
+                <div class="metric-label">Time balance</div>
+                <div class="metric-value" id="balance-minutes">{{ '%.1f'|format(device.time_balance) }}</div>
+                <div class="text-muted">minutes remaining</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Plan</div>
+                <div class="metric-value">
+                    {% if device.plan == 'premium' %}Premium{% else %}Default{% endif %}
+                </div>
+                <div class="text-muted">{{ device.download_limit }} kbps down / {{ device.upload_limit }} kbps up</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Coin rate</div>
+                <div class="metric-value">{{ '%g'|format(coin_minutes_per_peso) }}</div>
+                <div class="text-muted">minutes per peso</div>
+            </div>
+        </div>
 
-                    <h5 class="mt-4">Redeem a Voucher</h5>
+        {% if coinslot_enabled %}
+        <section class="coin-panel mb-4" aria-labelledby="coin-panel-title">
+            <div class="coin-panel-header">
+                <div>
+                    <h2 class="h4 mb-1" id="coin-panel-title">Buy Time With Coins</h2>
+                    <div class="text-muted">{{ portal_subtitle }}</div>
+                </div>
+                <form action="{{ url_for('portal.insert_coin') }}" method="POST" class="m-0">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="btn btn-warning btn-lg" id="claim-coin-button">
+                        Start coin session
+                    </button>
+                </form>
+            </div>
+
+            <div class="coin-steps" id="coin-steps">
+                <div class="coin-step is-done" data-step="1">
+                    <div class="step-number">1</div>
+                    <h3 class="h6">Connect</h3>
+                    <p class="small text-muted mb-0">Join the PISO WIFI access point and open this portal.</p>
+                </div>
+                <div class="coin-step" data-step="2">
+                    <div class="step-number">2</div>
+                    <h3 class="h6">Claim</h3>
+                    <p class="small text-muted mb-0">Tap start so the slot credits this device only.</p>
+                </div>
+                <div class="coin-step" data-step="3">
+                    <div class="step-number">3</div>
+                    <h3 class="h6">Insert</h3>
+                    <p class="small text-muted mb-0">Put coins in while the countdown is active.</p>
+                </div>
+                <div class="coin-step" data-step="4">
+                    <div class="step-number">4</div>
+                    <h3 class="h6">Confirm</h3>
+                    <p class="small text-muted mb-0">Wait for "coin detected" and the minutes update.</p>
+                </div>
+                <div class="coin-step" data-step="5">
+                    <div class="step-number">5</div>
+                    <h3 class="h6">Browse</h3>
+                    <p class="small text-muted mb-0">Use the internet once your balance is active.</p>
+                </div>
+            </div>
+
+            <div class="coin-live">
+                <div class="coin-live-box" aria-live="polite">
+                    <div class="d-flex justify-content-between gap-3 align-items-start">
+                        <div>
+                            <div class="metric-label">Coin slot status</div>
+                            <h3 class="h5 mb-1" id="coin-session-title">Ready for your session</h3>
+                            <p class="text-muted mb-0" id="coin-session-detail">
+                                Tap start when you are beside the coin slot.
+                            </p>
+                        </div>
+                        <span class="badge text-bg-secondary" id="coin-session-badge">Available</span>
+                    </div>
+                    <div class="progress mt-3" role="progressbar" aria-label="Coin session countdown">
+                        <div class="progress-bar bg-warning text-dark" id="coin-countdown-bar" style="width: 0%">0s</div>
+                    </div>
+                    <div class="alert alert-success mt-3 mb-0 d-none" id="coin-detected-alert">
+                        Coin detected. Your minutes were added.
+                    </div>
+                </div>
+
+                <div class="coin-live-box">
+                    <div class="metric-label">Current session</div>
+                    <dl class="row mb-0">
+                        <dt class="col-7">Seconds left</dt>
+                        <dd class="col-5 text-end" id="coin-seconds-left">0</dd>
+                        <dt class="col-7">Pesos inserted</dt>
+                        <dd class="col-5 text-end" id="coin-pesos-inserted">₱0</dd>
+                        <dt class="col-7">Minutes added</dt>
+                        <dd class="col-5 text-end" id="coin-minutes-added">0</dd>
+                    </dl>
+                </div>
+            </div>
+        </section>
+        {% endif %}
+
+        <div class="row g-3">
+            <div class="col-lg-7">
+                <div class="coin-live-box h-100">
+                    <h2 class="h5">Redeem a Voucher</h2>
                     <form action="{{ url_for('portal.redeem') }}" method="POST" class="row g-2">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                        <div class="col-auto">
+                        <div class="col-md">
                             <input type="text" name="code" class="form-control" placeholder="XXXX-XXXX" required>
                         </div>
-                        <div class="col-auto">
-                            <button type="submit" class="btn btn-primary">Redeem</button>
+                        <div class="col-md-auto">
+                            <button type="submit" class="btn btn-primary w-100">Redeem</button>
                         </div>
                     </form>
-
+                </div>
+            </div>
+            <div class="col-lg-5">
+                <div class="coin-live-box h-100">
+                    <h2 class="h5">Plan Upgrade</h2>
                     {% if device.plan == 'default' and not device.upgrade_requested %}
-                    <form action="{{ url_for('portal.request_upgrade') }}" method="POST" class="mt-3">
+                    <form action="{{ url_for('portal.request_upgrade') }}" method="POST">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         <button type="submit" class="btn btn-outline-success">Request Premium Upgrade</button>
                     </form>
                     {% elif device.upgrade_requested %}
-                        <span class="badge bg-warning mt-3">Premium upgrade requested - waiting for approval</span>
+                        <span class="badge text-bg-warning">Premium upgrade requested</span>
+                    {% else %}
+                        <span class="badge text-bg-success">Premium active</span>
                     {% endif %}
-                {% else %}
-                    <p class="text-center">Could not identify your device.
-                       Make sure you are connected to the PISO WIFI network, then refresh this page.</p>
-                {% endif %}
+                </div>
             </div>
         </div>
-    </div>
+    {% else %}
+        <div class="coin-panel">
+            <div class="coin-panel-header">
+                <div>
+                    <h1 class="h3 mb-1">Connect to PISO WIFI</h1>
+                    <div class="text-muted">This portal needs to identify your device before accepting payment.</div>
+                </div>
+            </div>
+            <div class="coin-steps">
+                <div class="coin-step is-active">
+                    <div class="step-number">1</div>
+                    <h2 class="h6">Join the AP</h2>
+                    <p class="small text-muted mb-0">Connect your phone to the PISO WIFI network.</p>
+                </div>
+                <div class="coin-step">
+                    <div class="step-number">2</div>
+                    <h2 class="h6">Open portal</h2>
+                    <p class="small text-muted mb-0">Refresh this page after joining the access point.</p>
+                </div>
+                <div class="coin-step">
+                    <div class="step-number">3</div>
+                    <h2 class="h6">Start payment</h2>
+                    <p class="small text-muted mb-0">The coin button appears after your device is detected.</p>
+                </div>
+            </div>
+        </div>
+    {% endif %}
 </div>
+
+{% if device and coinslot_enabled %}
+<script>
+(function () {
+    var claimTimeout = {{ coin_claim_timeout|int }};
+    var minutesPerPeso = {{ coin_minutes_per_peso|float }};
+    var statusUrl = '{{ url_for('portal.coin_status') }}';
+    var claimButton = document.getElementById('claim-coin-button');
+    var title = document.getElementById('coin-session-title');
+    var detail = document.getElementById('coin-session-detail');
+    var badge = document.getElementById('coin-session-badge');
+    var balance = document.getElementById('balance-minutes');
+    var secondsLeft = document.getElementById('coin-seconds-left');
+    var pesosInserted = document.getElementById('coin-pesos-inserted');
+    var minutesAdded = document.getElementById('coin-minutes-added');
+    var countdownBar = document.getElementById('coin-countdown-bar');
+    var detectedAlert = document.getElementById('coin-detected-alert');
+    var steps = Array.prototype.slice.call(document.querySelectorAll('[data-step]'));
+    var lastPesos = 0;
+    var hadSession = false;
+
+    function setStep(activeStep, doneThrough) {
+        steps.forEach(function (step) {
+            var number = Number(step.getAttribute('data-step'));
+            step.classList.toggle('is-active', number === activeStep);
+            step.classList.toggle('is-done', number <= doneThrough);
+        });
+    }
+
+    function setBadge(text, className) {
+        badge.className = 'badge ' + className;
+        badge.textContent = text;
+    }
+
+    function setProgress(seconds) {
+        var safeSeconds = Math.max(0, seconds || 0);
+        var percent = claimTimeout > 0 ? Math.min(100, (safeSeconds / claimTimeout) * 100) : 0;
+        countdownBar.style.width = percent + '%';
+        countdownBar.textContent = safeSeconds + 's';
+        secondsLeft.textContent = safeSeconds;
+    }
+
+    function setIdle() {
+        title.textContent = 'Ready for your session';
+        detail.textContent = 'Tap start when you are beside the coin slot.';
+        setBadge('Available', 'text-bg-secondary');
+        claimButton.disabled = false;
+        claimButton.textContent = 'Start coin session';
+        setProgress(0);
+        pesosInserted.textContent = '₱0';
+        minutesAdded.textContent = '0';
+        setStep(2, 1);
+    }
+
+    function setBusy() {
+        title.textContent = 'Coin slot is busy';
+        detail.textContent = 'Another device is using the slot. Wait for their countdown to finish.';
+        setBadge('One at a time', 'text-bg-warning');
+        claimButton.disabled = true;
+        claimButton.textContent = 'Wait for slot';
+        setProgress(0);
+        setStep(2, 1);
+    }
+
+    function setActive(status) {
+        hadSession = true;
+        var pesos = Number(status.pesos_inserted || 0);
+        var insertedMinutes = pesos * minutesPerPeso;
+        title.textContent = pesos > 0 ? 'Coin detected' : 'Insert coins now';
+        detail.textContent = pesos > 0
+            ? 'Your balance updated. Add more coins before the timer ends, or start browsing.'
+            : 'This coin slot session belongs to your device only.';
+        setBadge('Your turn', 'text-bg-success');
+        claimButton.disabled = false;
+        claimButton.textContent = 'Extend session';
+        setProgress(status.seconds_left || 0);
+        pesosInserted.textContent = '₱' + pesos.toLocaleString();
+        minutesAdded.textContent = insertedMinutes.toLocaleString(undefined, {
+            maximumFractionDigits: 1
+        });
+        balance.textContent = Number(status.balance || 0).toFixed(1);
+
+        if (pesos > lastPesos) {
+            detectedAlert.classList.remove('d-none');
+        }
+        lastPesos = pesos;
+        setStep(pesos > 0 ? 5 : 3, pesos > 0 ? 4 : 2);
+    }
+
+    function poll() {
+        fetch(statusUrl, {headers: {'Accept': 'application/json'}})
+            .then(function (response) { return response.json(); })
+            .then(function (status) {
+                if (!status.enabled) {
+                    return;
+                }
+                if (status.active && status.yours) {
+                    setActive(status);
+                } else if (status.active) {
+                    setBusy();
+                } else {
+                    if (hadSession) {
+                        window.setTimeout(function () { window.location.reload(); }, 900);
+                    } else {
+                        setIdle();
+                    }
+                }
+            })
+            .catch(function () {
+                title.textContent = 'Checking coin slot';
+                detail.textContent = 'Status will update automatically when the portal reconnects.';
+                setBadge('Checking', 'text-bg-secondary');
+            });
+    }
+
+    setIdle();
+    poll();
+    window.setInterval(poll, 1500);
+})();
+</script>
+{% endif %}
 {% endblock %}

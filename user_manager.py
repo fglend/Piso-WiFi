@@ -94,6 +94,14 @@ class UserManager:
                 )
             ''')
 
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS app_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+
             # Additive column migrations for databases created by older versions
             self._add_column_if_missing(c, 'transactions', 'source', "TEXT DEFAULT 'cash'")
 
@@ -115,6 +123,40 @@ class UserManager:
         if column not in cols:
             cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
+    # --- dynamic app settings ------------------------------------------------
+
+    def get_app_settings(self, defaults):
+        conn = self._connect()
+        try:
+            rows = conn.execute('SELECT key, value FROM app_settings').fetchall()
+            stored = {row['key']: row['value'] for row in rows}
+            return {**defaults, **stored}
+        except Exception as e:
+            self.logger.error(f"Error loading app settings: {e}")
+            return dict(defaults)
+        finally:
+            conn.close()
+
+    def update_app_settings(self, values):
+        conn = self._connect()
+        try:
+            for key, value in values.items():
+                conn.execute('''
+                    INSERT INTO app_settings (key, value, updated_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(key) DO UPDATE SET
+                        value = excluded.value,
+                        updated_at = CURRENT_TIMESTAMP
+                ''', (key, str(value)))
+            conn.commit()
+            return True
+        except Exception as e:
+            self.logger.error(f"Error saving app settings: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
     # --- balance / time -----------------------------------------------------
 
     def add_time(self, mac_address, amount, minutes, source='cash'):
@@ -125,8 +167,19 @@ class UserManager:
             user = c.fetchone()
 
             if user is None:
-                c.execute('INSERT INTO users (mac_address, time_balance, status) VALUES (?, ?, ?)',
-                          (mac_address, minutes, 'active'))
+                plan = self.get_plans().get('default', {
+                    'download_kbps': 2048,
+                    'upload_kbps': 1024,
+                })
+                c.execute('''
+                    INSERT INTO users (
+                        mac_address, time_balance, status,
+                        download_limit, upload_limit, plan
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                ''', (
+                    mac_address, minutes, 'active',
+                    plan['download_kbps'], plan['upload_kbps'], 'default',
+                ))
                 user_id = c.lastrowid
             else:
                 user_id = user['id']
@@ -264,6 +317,11 @@ class UserManager:
                 ON CONFLICT(name) DO UPDATE SET download_kbps = excluded.download_kbps,
                                                 upload_kbps = excluded.upload_kbps
             ''', (name, download_kbps, upload_kbps))
+            conn.execute('''
+                UPDATE users
+                SET download_limit = ?, upload_limit = ?
+                WHERE plan = ?
+            ''', (download_kbps, upload_kbps, name))
             conn.commit()
             return True
         except Exception as e:
@@ -299,8 +357,15 @@ class UserManager:
         conn = self._connect()
         try:
             conn.execute('''
-                UPDATE users SET download_limit = ?, upload_limit = ? WHERE mac_address = ?
-            ''', (download_kbps, upload_kbps, mac_address))
+                INSERT INTO users (
+                    mac_address, time_balance, status,
+                    download_limit, upload_limit, plan
+                ) VALUES (?, 0, 'inactive', ?, ?, 'custom')
+                ON CONFLICT(mac_address) DO UPDATE SET
+                    download_limit = excluded.download_limit,
+                    upload_limit = excluded.upload_limit,
+                    plan = 'custom'
+            ''', (mac_address, download_kbps, upload_kbps))
             conn.commit()
             return True
         except Exception as e:
@@ -392,6 +457,37 @@ class UserManager:
         except Exception as e:
             self.logger.error(f"Error listing transactions: {e}")
             return []
+        finally:
+            conn.close()
+
+    def get_revenue_summary(self):
+        conn = self._connect()
+        try:
+            row = conn.execute('''
+                SELECT
+                    COALESCE(SUM(CASE
+                        WHEN date(created_at) = date('now', 'localtime') THEN amount
+                        ELSE 0
+                    END), 0) AS day,
+                    COALESCE(SUM(CASE
+                        WHEN datetime(created_at) >= datetime('now', 'localtime', '-6 days')
+                        THEN amount ELSE 0
+                    END), 0) AS week,
+                    COALESCE(SUM(CASE
+                        WHEN strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now', 'localtime')
+                        THEN amount ELSE 0
+                    END), 0) AS month
+                FROM transactions
+                WHERE amount > 0
+            ''').fetchone()
+            return {
+                'day': float(row['day']),
+                'week': float(row['week']),
+                'month': float(row['month']),
+            }
+        except Exception as e:
+            self.logger.error(f"Error calculating revenue summary: {e}")
+            return {'day': 0.0, 'week': 0.0, 'month': 0.0}
         finally:
             conn.close()
 

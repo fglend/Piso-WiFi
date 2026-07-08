@@ -125,10 +125,10 @@ random device. Configure the slot's pulses-per-peso to match
 4. Start the container using Docker Compose:
    ```bash
    # Start in detached mode
-   docker-compose up -d
+   docker compose up -d
 
    # Or start with logs visible
-   docker-compose up
+   docker compose up
    ```
 
 5. Verify the container is running:
@@ -138,7 +138,7 @@ random device. Configure the slot's pulses-per-peso to match
 
 6. Check the logs:
    ```bash
-   docker-compose logs -f
+   docker compose logs -f
    ```
 
 7. Access the application:
@@ -147,15 +147,23 @@ random device. Configure the slot's pulses-per-peso to match
 
 8. Stop the container:
    ```bash
-   docker-compose down
+   docker compose down
    ```
 
 Common Docker Commands:
-- Rebuild after changes: `docker-compose up --build`
-- Remove containers and volumes: `docker-compose down -v`
-- View container logs: `docker-compose logs -f`
+- Rebuild after changes: `docker compose up --build`
+- Remove containers and volumes: `docker compose down -v`
+- View container logs: `docker compose logs -f`
 - Shell access: `docker exec -it piso_wifi bash`
-- Check container status: `docker-compose ps`
+- Check container status: `docker compose ps`
+
+The default Compose file is for local web-app testing. It sets
+`MANAGE_HARDWARE=false`, so the Flask app and SQLite database run without
+configuring host WiFi, iptables, dnsmasq, GPIO, or traffic shaping. It keeps
+`COINSLOT_ENABLED=true` and a `DEV_FAKE_MAC` so you can see and test the
+coin-session UI locally, but physical coin pulses are only read when hardware
+management is enabled on the target device. Use `MANAGE_HARDWARE=true` only on
+the target Linux hardware.
 
 #### Option 2: Local Development Setup
 
@@ -222,8 +230,17 @@ The admin interface will be available at `http://localhost:8000/admin`
 Copy `.env.example` to `.env` and adjust. Key options:
 
 - `WIFI_INTERFACE` / `INTERNET_INTERFACE`: AP and uplink interfaces (default: wlan0 / wlan1)
+- `MANAGE_HARDWARE`: Set `false` for local Docker/web-only testing; set `true`
+  on Orange Pi hardware where the app should manage WiFi/firewall/QoS.
+- `DEV_FAKE_MAC`: Optional local-only MAC fallback for Docker UI testing when
+  `MANAGE_HARDWARE=false`.
 - `AP_SSID`: WiFi network name
 - `RATE_MINUTES_PER_PESO`: Minutes granted per peso (default: 5)
+- `PORTAL_TITLE` / `PORTAL_SUBTITLE`: Portal copy defaults; admins can
+  override these in the dashboard at runtime.
+- `DASHBOARD_REFRESH_SECONDS`: Admin dashboard live refresh interval.
+- `DEFAULT_DOWNLOAD_KBPS` / `DEFAULT_UPLOAD_KBPS`: Default plan speed
+  fallbacks; admins can override these in the dashboard at runtime.
 - `DB_PATH`: SQLite database path (default: `config/piso_wifi.db`)
 - `SECRET_KEY`: Flask session key — **required in production**
 - `ADMIN_USERNAME` / `ADMIN_PASSWORD_HASH`: Admin credentials. Generate the hash with:

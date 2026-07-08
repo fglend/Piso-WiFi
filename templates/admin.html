@@ -5,8 +5,131 @@
 {% block content %}
 <div class="row">
     <div class="col-md-12">
-        <h2>Connected Devices</h2>
-        <p class="text-muted">Rate: 1 peso = {{ '%g'|format(minutes_per_peso) }} minutes</p>
+        <div class="d-flex flex-column flex-md-row justify-content-between gap-2 align-items-md-end mb-3">
+            <div>
+                <h2 class="mb-1">Admin Dashboard</h2>
+                <p class="text-muted mb-0">Rate: 1 peso = {{ '%g'|format(minutes_per_peso) }} minutes</p>
+            </div>
+            <a href="{{ url_for('admin.transactions') }}" class="btn btn-outline-secondary btn-sm">View Transactions</a>
+        </div>
+
+        <div class="row g-3 mb-4">
+            <div class="col-md-4">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <div class="text-muted small text-uppercase">Revenue Today</div>
+                        <div class="display-6" id="revenue-day">₱{{ '%.2f'|format(revenue.day) }}</div>
+                        <div class="text-muted small">From paid top-ups today</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <div class="text-muted small text-uppercase">Revenue This Week</div>
+                        <div class="display-6" id="revenue-week">₱{{ '%.2f'|format(revenue.week) }}</div>
+                        <div class="text-muted small">Last 7 days including today</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <div class="text-muted small text-uppercase">Revenue This Month</div>
+                        <div class="display-6" id="revenue-month">₱{{ '%.2f'|format(revenue.month) }}</div>
+                        <div class="text-muted small">Current calendar month</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mb-4">
+            <div class="card-header">
+                <div class="d-flex flex-column flex-md-row justify-content-between gap-2">
+                    <div>
+                        <h3 class="h5 mb-0">System Settings</h3>
+                        <div class="text-muted small">Changes apply to new top-ups and portal sessions immediately.</div>
+                    </div>
+                    <div class="text-muted small">
+                        Live refresh: <span id="dashboard-refresh-label">{{ app_settings.dashboard_refresh_seconds }}</span>s
+                    </div>
+                </div>
+            </div>
+            <div class="card-body">
+                <form action="{{ url_for('admin.update_settings') }}" method="POST" class="row g-3">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <div class="col-md-4">
+                        <label class="form-label" for="minutes_per_peso">Minutes per peso</label>
+                        <input id="minutes_per_peso" name="minutes_per_peso" type="number" min="1" max="240" step="0.5"
+                               value="{{ app_settings.minutes_per_peso }}" class="form-control" required>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label" for="coinslot_claim_timeout">Coin session seconds</label>
+                        <input id="coinslot_claim_timeout" name="coinslot_claim_timeout" type="number" min="10" max="600"
+                               value="{{ app_settings.coinslot_claim_timeout }}" class="form-control" required>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label" for="coinslot_pulses_per_peso">Pulses per peso</label>
+                        <input id="coinslot_pulses_per_peso" name="coinslot_pulses_per_peso" type="number" min="1" max="20"
+                               value="{{ app_settings.coinslot_pulses_per_peso }}" class="form-control" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label" for="portal_title">Portal title</label>
+                        <input id="portal_title" name="portal_title" type="text" maxlength="120"
+                               value="{{ app_settings.portal_title }}" class="form-control" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label" for="portal_subtitle">Coin instructions</label>
+                        <input id="portal_subtitle" name="portal_subtitle" type="text" maxlength="180"
+                               value="{{ app_settings.portal_subtitle }}" class="form-control" required>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label" for="dashboard_refresh_seconds">Dashboard refresh seconds</label>
+                        <input id="dashboard_refresh_seconds" name="dashboard_refresh_seconds" type="number" min="3" max="120"
+                               value="{{ app_settings.dashboard_refresh_seconds }}" class="form-control" required>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label" for="default_download_kbps">Default download kbps</label>
+                        <input id="default_download_kbps" name="default_download_kbps" type="number" min="32" max="100000"
+                               value="{{ app_settings.default_download_kbps }}" class="form-control" required>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label" for="default_upload_kbps">Default upload kbps</label>
+                        <input id="default_upload_kbps" name="default_upload_kbps" type="number" min="32" max="100000"
+                               value="{{ app_settings.default_upload_kbps }}" class="form-control" required>
+                    </div>
+                    <div class="col-md-12 d-flex align-items-end">
+                        <button type="submit" class="btn btn-success">Save Settings</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div class="row g-3 mb-4">
+            <div class="col-md-6">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <div class="text-muted small text-uppercase">Connected Devices</div>
+                        <div class="display-6" id="device-count">{{ devices|length }}</div>
+                        <div class="text-muted small">
+                            <span id="active-device-count">{{ active_device_count }}</span>
+                            active with balance
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <div class="text-muted small text-uppercase">Current Rate</div>
+                        <div class="display-6"><span id="live-rate">{{ '%g'|format(minutes_per_peso) }}</span> min</div>
+                        <div class="text-muted small">per peso, refreshed automatically</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <h3>Connected Devices</h3>
         <table class="table table-striped">
             <thead>
                 <tr>
@@ -70,9 +193,9 @@
                             <form action="{{ url_for('admin.set_bandwidth') }}" method="POST" class="mt-2">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                                 <input type="hidden" name="mac_address" value="{{ device.mac_address }}">
-                                <input type="number" name="download" min="32" max="100000" placeholder="Down kbps" class="form-control d-inline" style="width: 110px;" required>
-                                <input type="number" name="upload" min="32" max="100000" placeholder="Up kbps" class="form-control d-inline" style="width: 110px;" required>
-                                <button type="submit" class="btn btn-secondary">Set Bandwidth</button>
+                                <input type="number" name="download" min="32" max="100000" value="{{ device.download_limit }}" aria-label="Download kbps" class="form-control d-inline" style="width: 110px;" required>
+                                <input type="number" name="upload" min="32" max="100000" value="{{ device.upload_limit }}" aria-label="Upload kbps" class="form-control d-inline" style="width: 110px;" required>
+                                <button type="submit" class="btn btn-secondary">Set MAC Speed</button>
                             </form>
                         </div>
                     </td>
@@ -84,4 +207,41 @@
         </table>
     </div>
 </div>
+<script>
+(function () {
+    var refreshSeconds = Number({{ app_settings.dashboard_refresh_seconds|int }});
+    var liveUrl = '{{ url_for('admin.dashboard_live') }}';
+
+    function peso(value) {
+        return '₱' + Number(value || 0).toFixed(2);
+    }
+
+    function setText(id, value) {
+        var element = document.getElementById(id);
+        if (element) {
+            element.textContent = value;
+        }
+    }
+
+    function refreshDashboard() {
+        fetch(liveUrl, {headers: {'Accept': 'application/json'}})
+            .then(function (response) { return response.json(); })
+            .then(function (data) {
+                setText('revenue-day', peso(data.revenue.day));
+                setText('revenue-week', peso(data.revenue.week));
+                setText('revenue-month', peso(data.revenue.month));
+                setText('device-count', data.device_count);
+                setText('active-device-count', data.active_device_count);
+                setText('live-rate', Number(data.minutes_per_peso || 0).toLocaleString(undefined, {
+                    maximumFractionDigits: 1
+                }));
+            })
+            .catch(function () {});
+    }
+
+    if (refreshSeconds >= 3) {
+        window.setInterval(refreshDashboard, refreshSeconds * 1000);
+    }
+})();
+</script>
 {% endblock %}

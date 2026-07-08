@@ -27,6 +27,13 @@ def _env_float(name, default):
         return float(default)
 
 
+def _env_bool(name, default):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.lower() in ('1', 'true', 'yes', 'on')
+
+
 @dataclass
 class Settings:
     # Flask
@@ -44,10 +51,23 @@ class Settings:
     # Pricing: minutes of access granted per peso
     minutes_per_peso: float = field(default_factory=lambda: _env_float('RATE_MINUTES_PER_PESO', 5.0))
 
+    # Portal/admin UI defaults. Admin changes can override these at runtime.
+    portal_title: str = field(default_factory=lambda: os.getenv('PORTAL_TITLE', 'PISO WIFI Portal'))
+    portal_subtitle: str = field(default_factory=lambda: os.getenv(
+        'PORTAL_SUBTITLE', 'Only one phone can use the coin slot at a time.'))
+    dashboard_refresh_seconds: int = field(
+        default_factory=lambda: _env_int('DASHBOARD_REFRESH_SECONDS', 10))
+    default_download_kbps: int = field(default_factory=lambda: _env_int('DEFAULT_DOWNLOAD_KBPS', 2048))
+    default_upload_kbps: int = field(default_factory=lambda: _env_int('DEFAULT_UPLOAD_KBPS', 1024))
+
     # Database
     db_path: str = field(default_factory=lambda: os.getenv('DB_PATH', 'config/piso_wifi.db'))
 
     # Network
+    # Set false for local Docker/dev runs that should exercise the web app and
+    # database without configuring host WiFi, iptables, dnsmasq, or tc.
+    manage_hardware: bool = field(default_factory=lambda: _env_bool('MANAGE_HARDWARE', True))
+    dev_fake_mac: str = field(default_factory=lambda: os.getenv('DEV_FAKE_MAC', ''))
     # 'wired': the Pi is a wired gateway (clients come in via an external AP /
     # PoE router in bridge mode on the LAN interface). 'ap': the Pi broadcasts
     # its own hotspot with hostapd.
@@ -66,12 +86,10 @@ class Settings:
 
     # Time manager
     check_interval: int = field(default_factory=lambda: _env_int('CHECK_INTERVAL', 5))
-    pause_on_disconnect: bool = field(
-        default_factory=lambda: os.getenv('PAUSE_ON_DISCONNECT', 'true').lower() in ('1', 'true', 'yes'))
+    pause_on_disconnect: bool = field(default_factory=lambda: _env_bool('PAUSE_ON_DISCONNECT', True))
 
     # Coinslot (GPIO pulse type, e.g. CH-926)
-    coinslot_enabled: bool = field(
-        default_factory=lambda: os.getenv('COINSLOT_ENABLED', 'false').lower() in ('1', 'true', 'yes'))
+    coinslot_enabled: bool = field(default_factory=lambda: _env_bool('COINSLOT_ENABLED', False))
     coinslot_gpio: int = field(default_factory=lambda: _env_int('COINSLOT_GPIO', 6))
     coinslot_pulses_per_peso: int = field(
         default_factory=lambda: _env_int('COINSLOT_PULSES_PER_PESO', 1))
