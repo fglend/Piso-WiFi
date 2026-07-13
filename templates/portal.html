@@ -1,309 +1,207 @@
-{% extends "base.html" %}
+{% extends "portal_base.html" %}
 
-{% block title %}Portal{% endblock %}
+{% block title %}{{ portal_title }}{% endblock %}
 
 {% block content %}
-<style>
-    .portal-shell {
-        max-width: 980px;
-        margin: 0 auto;
-    }
-
-    .status-band {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 0.75rem;
-    }
-
-    .metric {
-        border: 1px solid rgba(0, 0, 0, 0.08);
-        border-radius: 0.5rem;
-        padding: 1rem;
-        background: #fff;
-        min-height: 6rem;
-    }
-
-    .metric-label {
-        color: #6c757d;
-        font-size: 0.82rem;
-        text-transform: uppercase;
-        letter-spacing: 0;
-    }
-
-    .metric-value {
-        font-size: clamp(1.35rem, 4vw, 2rem);
-        font-weight: 700;
-        line-height: 1.15;
-    }
-
-    .coin-panel {
-        border: 1px solid rgba(0, 0, 0, 0.08);
-        border-radius: 0.5rem;
-        background: #fff;
-        overflow: hidden;
-    }
-
-    .coin-panel-header {
-        display: flex;
-        justify-content: space-between;
-        gap: 1rem;
-        align-items: center;
-        padding: 1rem;
-        border-bottom: 1px solid rgba(0, 0, 0, 0.08);
-        background: #f8f9fa;
-    }
-
-    .coin-steps {
-        display: grid;
-        grid-template-columns: repeat(5, minmax(0, 1fr));
-        gap: 0.75rem;
-        padding: 1rem;
-    }
-
-    .coin-step {
-        border: 1px solid rgba(0, 0, 0, 0.08);
-        border-radius: 0.5rem;
-        padding: 0.85rem;
-        min-height: 8rem;
-        background: #fff;
-    }
-
-    .coin-step.is-active {
-        border-color: #ffc107;
-        box-shadow: 0 0 0 0.18rem rgba(255, 193, 7, 0.22);
-    }
-
-    .coin-step.is-done {
-        border-color: #198754;
-        background: #f1fbf6;
-    }
-
-    .step-number {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 1.75rem;
-        height: 1.75rem;
-        border-radius: 50%;
-        background: #212529;
-        color: #fff;
-        font-weight: 700;
-        margin-bottom: 0.65rem;
-    }
-
-    .coin-step.is-done .step-number {
-        background: #198754;
-    }
-
-    .coin-step.is-active .step-number {
-        background: #ffc107;
-        color: #212529;
-    }
-
-    .coin-live {
-        display: grid;
-        grid-template-columns: 1.4fr 1fr;
-        gap: 1rem;
-        padding: 0 1rem 1rem;
-        align-items: stretch;
-    }
-
-    .coin-live-box {
-        border: 1px solid rgba(0, 0, 0, 0.08);
-        border-radius: 0.5rem;
-        padding: 1rem;
-        background: #fff;
-    }
-
-    @media (max-width: 768px) {
-        .status-band,
-        .coin-live {
-            grid-template-columns: 1fr;
-        }
-
-        .coin-steps {
-            grid-template-columns: 1fr;
-        }
-
-        .coin-panel-header {
-            align-items: flex-start;
-            flex-direction: column;
-        }
-    }
-</style>
-
-<div class="portal-shell">
-    {% if device %}
-        <div class="d-flex flex-column flex-md-row justify-content-between gap-3 align-items-md-center mb-3">
-            <div>
-                <p class="text-muted mb-1">Connected device</p>
-                <h1 class="h3 mb-0">{{ portal_title }}</h1>
-                <div class="text-muted small text-break">{{ device.mac_address }}</div>
+{% if posts %}
+<section class="portal-carousel" data-carousel aria-label="Announcements">
+    <div class="carousel-slides" aria-live="off">
+        {% for post in posts %}
+        <article class="carousel-slide" data-carousel-slide {% if not loop.first %}hidden{% endif %}>
+            <img src="{{ url_for('static', filename='uploads/' ~ post.image_file) }}"
+                 alt="{{ post.title }}">
+            <div class="carousel-copy">
+                <div class="metric-label">Announcement</div>
+                <h2>{{ post.title }}</h2>
+                {% if post.description %}<p class="mb-0">{{ post.description }}</p>{% endif %}
             </div>
-            {% if device.time_balance <= 0 %}
-                <span class="badge text-bg-danger align-self-start align-self-md-center">No internet access</span>
+        </article>
+        {% endfor %}
+    </div>
+    {% if posts|length > 1 %}
+    <div class="carousel-controls">
+        <button type="button" class="btn btn-ghost btn-sm" data-carousel-previous aria-label="Previous announcement">Previous</button>
+        <span class="muted small" data-carousel-position>1 / {{ posts|length }}</span>
+        <button type="button" class="btn btn-ghost btn-sm" data-carousel-next aria-label="Next announcement">Next</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-carousel-toggle aria-pressed="false">Pause</button>
+    </div>
+    {% endif %}
+</section>
+{% endif %}
+
+{% if device %}
+    <div class="portal-header">
+        <div>
+            <div class="metric-label">Connected device</div>
+            <h1 class="mb-0">{{ portal_title }}</h1>
+            <div class="muted small text-break">{{ device.mac_address }}</div>
+        </div>
+        {% if device.time_balance <= 0 %}
+            <span class="badge badge-danger">No internet access</span>
+        {% else %}
+            <span class="badge badge-ok">Internet active</span>
+        {% endif %}
+    </div>
+
+    <div class="grid grid-3 mb-4">
+        <div class="metric metric-hero">
+            <div class="metric-label">Time balance</div>
+            <div class="metric-value" id="balance-minutes">{{ '%.1f'|format(device.time_balance) }}</div>
+            <div class="muted small">minutes remaining</div>
+        </div>
+        <div class="metric">
+            <div class="metric-label">Plan</div>
+            <div class="metric-value">{% if device.plan == 'premium' %}Premium{% else %}Default{% endif %}</div>
+            <div class="muted small">{{ '%g'|format(device.download_limit / 1000) }} Mbps down / {{ '%g'|format(device.upload_limit / 1000) }} Mbps up</div>
+        </div>
+        <div class="metric">
+            <div class="metric-label">Price list</div>
+            {% if rates %}
+            <dl class="kv small">
+                {% for rate in rates %}
+                <div><dt>₱{{ rate.pesos }}</dt><dd>{{ rate.label }}</dd></div>
+                {% endfor %}
+            </dl>
             {% else %}
-                <span class="badge text-bg-success align-self-start align-self-md-center">Internet active</span>
+            <div class="metric-value">{{ '%g'|format(coin_minutes_per_peso) }}</div>
+            <div class="muted small">minutes per peso</div>
             {% endif %}
         </div>
+    </div>
 
-        <div class="status-band mb-4">
-            <div class="metric">
-                <div class="metric-label">Time balance</div>
-                <div class="metric-value" id="balance-minutes">{{ '%.1f'|format(device.time_balance) }}</div>
-                <div class="text-muted">minutes remaining</div>
+    {% if coinslot_enabled %}
+    <section class="card" aria-labelledby="coin-panel-title">
+        <div class="card-head">
+            <div>
+                <h2 class="mb-0" id="coin-panel-title">Buy Time With Coins</h2>
+                <div class="muted small">{{ portal_subtitle }}</div>
             </div>
-            <div class="metric">
-                <div class="metric-label">Plan</div>
-                <div class="metric-value">
-                    {% if device.plan == 'premium' %}Premium{% else %}Default{% endif %}
-                </div>
-                <div class="text-muted">{{ device.download_limit }} kbps down / {{ device.upload_limit }} kbps up</div>
-            </div>
-            <div class="metric">
-                <div class="metric-label">Coin rate</div>
-                <div class="metric-value">{{ '%g'|format(coin_minutes_per_peso) }}</div>
-                <div class="text-muted">minutes per peso</div>
-            </div>
+            <form action="{{ url_for('portal.insert_coin') }}" method="POST" class="mb-0">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="btn btn-primary btn-lg" id="claim-coin-button">
+                    Start coin session
+                </button>
+            </form>
         </div>
 
-        {% if coinslot_enabled %}
-        <section class="coin-panel mb-4" aria-labelledby="coin-panel-title">
-            <div class="coin-panel-header">
-                <div>
-                    <h2 class="h4 mb-1" id="coin-panel-title">Buy Time With Coins</h2>
-                    <div class="text-muted">{{ portal_subtitle }}</div>
+        <div class="card-body">
+            <div class="steps mb-4" id="coin-steps">
+                <div class="step is-done" data-step="1">
+                    <div class="step-num">1</div>
+                    <h3>Connect</h3>
+                    <p class="small muted">Join the WiFi and open this portal.</p>
                 </div>
-                <form action="{{ url_for('portal.insert_coin') }}" method="POST" class="m-0">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                    <button type="submit" class="btn btn-warning btn-lg" id="claim-coin-button">
-                        Start coin session
-                    </button>
-                </form>
-            </div>
-
-            <div class="coin-steps" id="coin-steps">
-                <div class="coin-step is-done" data-step="1">
-                    <div class="step-number">1</div>
-                    <h3 class="h6">Connect</h3>
-                    <p class="small text-muted mb-0">Join the PISO WIFI access point and open this portal.</p>
+                <div class="step" data-step="2">
+                    <div class="step-num">2</div>
+                    <h3>Claim</h3>
+                    <p class="small muted">Tap start so coins credit this device only.</p>
                 </div>
-                <div class="coin-step" data-step="2">
-                    <div class="step-number">2</div>
-                    <h3 class="h6">Claim</h3>
-                    <p class="small text-muted mb-0">Tap start so the slot credits this device only.</p>
+                <div class="step" data-step="3">
+                    <div class="step-num">3</div>
+                    <h3>Insert</h3>
+                    <p class="small muted">Drop coins while the countdown runs.</p>
                 </div>
-                <div class="coin-step" data-step="3">
-                    <div class="step-number">3</div>
-                    <h3 class="h6">Insert</h3>
-                    <p class="small text-muted mb-0">Put coins in while the countdown is active.</p>
+                <div class="step" data-step="4">
+                    <div class="step-num">4</div>
+                    <h3>Confirm</h3>
+                    <p class="small muted">Watch your minutes update instantly.</p>
                 </div>
-                <div class="coin-step" data-step="4">
-                    <div class="step-number">4</div>
-                    <h3 class="h6">Confirm</h3>
-                    <p class="small text-muted mb-0">Wait for "coin detected" and the minutes update.</p>
-                </div>
-                <div class="coin-step" data-step="5">
-                    <div class="step-number">5</div>
-                    <h3 class="h6">Browse</h3>
-                    <p class="small text-muted mb-0">Use the internet once your balance is active.</p>
+                <div class="step" data-step="5">
+                    <div class="step-num">5</div>
+                    <h3>Browse</h3>
+                    <p class="small muted">Enjoy the internet with your balance.</p>
                 </div>
             </div>
 
-            <div class="coin-live">
-                <div class="coin-live-box" aria-live="polite">
-                    <div class="d-flex justify-content-between gap-3 align-items-start">
+            <div class="grid grid-2">
+                <div class="stack" aria-live="polite">
+                    <div class="row-between">
                         <div>
                             <div class="metric-label">Coin slot status</div>
-                            <h3 class="h5 mb-1" id="coin-session-title">Ready for your session</h3>
-                            <p class="text-muted mb-0" id="coin-session-detail">
+                            <h3 class="mb-0" id="coin-session-title">Ready for your session</h3>
+                            <p class="muted small mb-0" id="coin-session-detail">
                                 Tap start when you are beside the coin slot.
                             </p>
                         </div>
                         <span class="badge text-bg-secondary" id="coin-session-badge">Available</span>
                     </div>
-                    <div class="progress mt-3" role="progressbar" aria-label="Coin session countdown">
-                        <div class="progress-bar bg-warning text-dark" id="coin-countdown-bar" style="width: 0%">0s</div>
+                    <div class="progress" role="progressbar" aria-label="Coin session countdown">
+                        <div class="progress-bar" id="coin-countdown-bar" style="width: 0%">0s</div>
                     </div>
-                    <div class="alert alert-success mt-3 mb-0 d-none" id="coin-detected-alert">
+                    <div class="flash flash-success mb-0 d-none" id="coin-detected-alert">
                         Coin detected. Your minutes were added.
                     </div>
                 </div>
 
-                <div class="coin-live-box">
+                <div>
                     <div class="metric-label">Current session</div>
-                    <dl class="row mb-0">
-                        <dt class="col-7">Seconds left</dt>
-                        <dd class="col-5 text-end" id="coin-seconds-left">0</dd>
-                        <dt class="col-7">Pesos inserted</dt>
-                        <dd class="col-5 text-end" id="coin-pesos-inserted">₱0</dd>
-                        <dt class="col-7">Minutes added</dt>
-                        <dd class="col-5 text-end" id="coin-minutes-added">0</dd>
+                    <dl class="kv">
+                        <div><dt>Seconds left</dt><dd id="coin-seconds-left">0</dd></div>
+                        <div><dt>Pesos inserted</dt><dd id="coin-pesos-inserted">₱0</dd></div>
+                        <div><dt>Minutes added</dt><dd id="coin-minutes-added">0</dd></div>
                     </dl>
                 </div>
             </div>
-        </section>
-        {% endif %}
-
-        <div class="row g-3">
-            <div class="col-lg-7">
-                <div class="coin-live-box h-100">
-                    <h2 class="h5">Redeem a Voucher</h2>
-                    <form action="{{ url_for('portal.redeem') }}" method="POST" class="row g-2">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                        <div class="col-md">
-                            <input type="text" name="code" class="form-control" placeholder="XXXX-XXXX" required>
-                        </div>
-                        <div class="col-md-auto">
-                            <button type="submit" class="btn btn-primary w-100">Redeem</button>
-                        </div>
-                    </form>
-                </div>
-            </div>
-            <div class="col-lg-5">
-                <div class="coin-live-box h-100">
-                    <h2 class="h5">Plan Upgrade</h2>
-                    {% if device.plan == 'default' and not device.upgrade_requested %}
-                    <form action="{{ url_for('portal.request_upgrade') }}" method="POST">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                        <button type="submit" class="btn btn-outline-success">Request Premium Upgrade</button>
-                    </form>
-                    {% elif device.upgrade_requested %}
-                        <span class="badge text-bg-warning">Premium upgrade requested</span>
-                    {% else %}
-                        <span class="badge text-bg-success">Premium active</span>
-                    {% endif %}
-                </div>
-            </div>
         </div>
-    {% else %}
-        <div class="coin-panel">
-            <div class="coin-panel-header">
-                <div>
-                    <h1 class="h3 mb-1">Connect to PISO WIFI</h1>
-                    <div class="text-muted">This portal needs to identify your device before accepting payment.</div>
-                </div>
-            </div>
-            <div class="coin-steps">
-                <div class="coin-step is-active">
-                    <div class="step-number">1</div>
-                    <h2 class="h6">Join the AP</h2>
-                    <p class="small text-muted mb-0">Connect your phone to the PISO WIFI network.</p>
-                </div>
-                <div class="coin-step">
-                    <div class="step-number">2</div>
-                    <h2 class="h6">Open portal</h2>
-                    <p class="small text-muted mb-0">Refresh this page after joining the access point.</p>
-                </div>
-                <div class="coin-step">
-                    <div class="step-number">3</div>
-                    <h2 class="h6">Start payment</h2>
-                    <p class="small text-muted mb-0">The coin button appears after your device is detected.</p>
-                </div>
-            </div>
-        </div>
+    </section>
     {% endif %}
-</div>
+
+    <div class="grid grid-2">
+        <div class="card mb-0">
+            <div class="card-body">
+                <h2>Redeem a Voucher</h2>
+                <form action="{{ url_for('portal.redeem') }}" method="POST" class="form-row">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="text" name="code" placeholder="XXXX-XXXX" aria-label="Voucher code" required>
+                    <button type="submit" class="btn btn-primary">Redeem</button>
+                </form>
+            </div>
+        </div>
+        <div class="card mb-0">
+            <div class="card-body">
+                <h2>Plan Upgrade</h2>
+                {% if device.plan == 'default' and not device.upgrade_requested %}
+                <form action="{{ url_for('portal.request_upgrade') }}" method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="btn btn-ghost">Request Premium Upgrade</button>
+                </form>
+                {% elif device.upgrade_requested %}
+                    <span class="badge badge-warn">Premium upgrade requested</span>
+                {% else %}
+                    <span class="badge badge-ok">Premium active</span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+{% else %}
+    <div class="portal-header">
+        <div>
+            <h1 class="mb-0">Connect to PISO WIFI</h1>
+            <p class="muted mb-0">This portal needs to identify your device before accepting payment.</p>
+        </div>
+    </div>
+    <div class="card">
+        <div class="card-body">
+            <div class="steps">
+                <div class="step is-active">
+                    <div class="step-num">1</div>
+                    <h2>Join the AP</h2>
+                    <p class="small muted">Connect your phone to the PISO WIFI network.</p>
+                </div>
+                <div class="step">
+                    <div class="step-num">2</div>
+                    <h2>Open portal</h2>
+                    <p class="small muted">Refresh this page after joining the access point.</p>
+                </div>
+                <div class="step">
+                    <div class="step-num">3</div>
+                    <h2>Start payment</h2>
+                    <p class="small muted">The coin button appears after your device is detected.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+{% endif %}
 
 {% if device and coinslot_enabled %}
 <script>
@@ -371,7 +269,8 @@
     function setActive(status) {
         hadSession = true;
         var pesos = Number(status.pesos_inserted || 0);
-        var insertedMinutes = pesos * minutesPerPeso;
+        // server-computed from the tier table, not a flat per-peso rate
+        var insertedMinutes = Number(status.minutes_added || 0);
         title.textContent = pesos > 0 ? 'Coin detected' : 'Insert coins now';
         detail.textContent = pesos > 0
             ? 'Your balance updated. Add more coins before the timer ends, or start browsing.'
@@ -422,6 +321,63 @@
     setIdle();
     poll();
     window.setInterval(poll, 1500);
+})();
+</script>
+{% endif %}
+{% if posts|length > 1 %}
+<script>
+(function () {
+    var carousel = document.querySelector('[data-carousel]');
+    if (!carousel) return;
+
+    var slides = Array.prototype.slice.call(
+        carousel.querySelectorAll('[data-carousel-slide]'));
+    var position = carousel.querySelector('[data-carousel-position]');
+    var toggle = carousel.querySelector('[data-carousel-toggle]');
+    var current = 0;
+    var timer = null;
+    var paused = false;
+
+    function show(index) {
+        current = (index + slides.length) % slides.length;
+        slides.forEach(function (slide, slideIndex) {
+            slide.hidden = slideIndex !== current;
+        });
+        position.textContent = (current + 1) + ' / ' + slides.length;
+    }
+
+    function stopRotation() {
+        if (timer) window.clearInterval(timer);
+        timer = null;
+    }
+
+    function startRotation() {
+        stopRotation();
+        if (!paused && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+            timer = window.setInterval(function () { show(current + 1); }, 6000);
+        }
+    }
+
+    carousel.querySelector('[data-carousel-previous]').addEventListener('click', function () {
+        show(current - 1);
+        startRotation();
+    });
+    carousel.querySelector('[data-carousel-next]').addEventListener('click', function () {
+        show(current + 1);
+        startRotation();
+    });
+    toggle.addEventListener('click', function () {
+        paused = !paused;
+        toggle.setAttribute('aria-pressed', paused ? 'true' : 'false');
+        toggle.textContent = paused ? 'Play' : 'Pause';
+        if (paused) stopRotation();
+        else startRotation();
+    });
+    carousel.addEventListener('mouseenter', stopRotation);
+    carousel.addEventListener('mouseleave', startRotation);
+    carousel.addEventListener('focusin', stopRotation);
+    carousel.addEventListener('focusout', startRotation);
+    startRotation();
 })();
 </script>
 {% endif %}

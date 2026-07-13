@@ -1,3 +1,5 @@
+from unittest.mock import MagicMock
+
 from time_manager import TimeManager
 from tests.conftest import MAC
 
@@ -78,3 +80,12 @@ def test_reset_session_clocks_on_start(user_manager, mock_network, settings):
     # clock restarted to "now", so downtime is not billed
     assert user_manager.get_last_deduction(MAC) > 1.0
     assert user_manager.check_balance(MAC) == 25
+
+
+def test_stop_uses_bounded_wait(user_manager, mock_network, settings):
+    tm = make_tm(user_manager, mock_network, settings)
+    tm.thread = MagicMock()
+
+    tm.stop()
+
+    tm.thread.join.assert_called_once_with(timeout=3)

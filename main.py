@@ -1,3 +1,4 @@
+import atexit
 import logging
 import os
 
@@ -22,7 +23,8 @@ def create_app(services=None, start_time_manager=True, manage_hardware=True, set
     """
     from routes import admin_bp, portal_bp
 
-    if services is None:
+    owns_services = services is None
+    if owns_services:
         from services import Services
         services = Services(settings=settings, manage_hardware=manage_hardware)
         if start_time_manager:
@@ -31,10 +33,17 @@ def create_app(services=None, start_time_manager=True, manage_hardware=True, set
             if services.coinslot:
                 logger.info("Starting coinslot service...")
                 services.coinslot.start()
+        atexit.register(services.shutdown)
 
     app = Flask(__name__)
     app.secret_key = services.settings.secret_key
+    app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024
     app.extensions['piso'] = services
+
+    @app.after_request
+    def set_security_headers(response):
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        return response
 
     init_csrf(app)
     app.register_blueprint(portal_bp)

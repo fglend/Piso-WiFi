@@ -15,6 +15,8 @@ import select
 import threading
 import time
 
+from pricing import compute_minutes
+
 logger = logging.getLogger(__name__)
 
 GPIO_ROOT = '/sys/class/gpio'
@@ -87,7 +89,7 @@ class SysfsGpioRelay:
         # 'low'/'high' set direction=out AND an initial value atomically,
         # so there's no window where the pin is an output with whatever
         # value it happened to power up with.
-        self._write(f'{pin_dir}/direction', 'high' if self.active_high else 'low')
+        self._write(f'{pin_dir}/direction', 'low' if self.active_high else 'high')
         self.set(False)
 
     def set(self, active):
@@ -142,7 +144,9 @@ class CoinslotService:
                 return None
             self._claim = {'mac': mac_address,
                            'expires': now + self.settings.coinslot_claim_timeout,
-                           'pulses': 0, 'pesos': 0.0}
+                           'pulses': 0, 'pesos': 0.0, 'minutes_added': 0.0,
+                           # rate table snapshot: one session, one price list
+                           'rates': self.user_manager.get_rates()}
             self._set_relay(True)
             self.logger.info(f"Coinslot claimed by {mac_address}")
             return self.settings.coinslot_claim_timeout
@@ -158,6 +162,7 @@ class CoinslotService:
                 'yours': mac_address is not None and claim['mac'] == mac_address,
                 'seconds_left': int(claim['expires'] - now),
                 'pesos_inserted': claim['pesos'],
+                'minutes_added': round(claim['minutes_added'], 1),
             }
 
     # --- pulse handling ---------------------------------------------------
@@ -173,12 +178,17 @@ class CoinslotService:
             if claim['pulses'] % self.settings.coinslot_pulses_per_peso != 0:
                 return
             pesos = 1
-            claim['pesos'] += pesos
+            old_total = claim['pesos']
+            claim['pesos'] = old_total + pesos
             # inserting coins keeps the window open
             claim['expires'] = now + self.settings.coinslot_claim_timeout
             mac = claim['mac']
-
-        minutes = pesos * self.settings.minutes_per_peso
+            # Tier the CUMULATIVE session total and credit the delta, so a
+            # ₱5 coin (5 pulses) earns the ₱5 tier, not 5x the ₱1 tier
+            fallback = self.settings.minutes_per_peso
+            minutes = (compute_minutes(claim['pesos'], claim['rates'], fallback)
+                       - compute_minutes(old_total, claim['rates'], fallback))
+            claim['minutes_added'] += minutes
         if self.user_manager.add_time(mac, pesos, minutes, source='coin'):
             self.network_controller.unblock_mac(mac)
             info = self.user_manager.get_device_info(mac)
@@ -217,8 +227,21 @@ class CoinslotService:
 
     def stop(self):
         self.running = False
-        if self.thread:
-            self.thread.join(timeout=3)
-        self.reader.close()
-        self._set_relay(False)
-        self.relay.close()
+        errors = []
+        actions = [
+            # Cut acceptor power before waiting for the pulse thread to exit.
+            ('de-energize relay', lambda: self._set_relay(False)),
+            ('join pulse thread',
+             lambda: self.thread.join(timeout=3) if self.thread else None),
+            ('close pulse reader', self.reader.close),
+            # close() retries the inactive write before unexporting the GPIO.
+            ('close relay GPIO', self.relay.close),
+        ]
+        for label, action in actions:
+            try:
+                action()
+            except Exception as exc:
+                errors.append(f'{label}: {exc}')
+                self.logger.error(f'Coinslot shutdown failed to {label}: {exc}')
+        if errors:
+            raise RuntimeError('; '.join(errors))

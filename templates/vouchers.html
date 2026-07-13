@@ -3,28 +3,31 @@
 {% block title %}Vouchers{% endblock %}
 
 {% block content %}
-<div class="row">
-    <div class="col-md-12">
-        <h2>Vouchers</h2>
+<div class="row-between mb-3">
+    <h1 class="mb-0">Vouchers</h1>
+    {% if show_all %}
+        <a href="{{ url_for('admin.vouchers') }}" class="btn btn-ghost btn-sm">Show unredeemed only</a>
+    {% else %}
+        <a href="{{ url_for('admin.vouchers', all=1) }}" class="btn btn-ghost btn-sm">Show all</a>
+    {% endif %}
+</div>
 
-        <form action="{{ url_for('admin.vouchers') }}" method="POST" class="row g-2 mb-4">
+<div class="card">
+    <div class="card-body">
+        <form action="{{ url_for('admin.vouchers') }}" method="POST" class="form-row">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <div class="col-auto">
-                <input type="number" name="minutes" min="1" step="any" class="form-control" placeholder="Minutes" required>
+            <div style="max-width: 200px;">
+                <label for="voucher-minutes">Minutes</label>
+                <input type="number" id="voucher-minutes" name="minutes" min="1" step="any" placeholder="e.g. 30" required>
             </div>
-            <div class="col-auto">
-                <button type="submit" class="btn btn-primary">Create Voucher</button>
-            </div>
-            <div class="col-auto ms-auto">
-                {% if show_all %}
-                    <a href="{{ url_for('admin.vouchers') }}" class="btn btn-outline-secondary">Show unredeemed only</a>
-                {% else %}
-                    <a href="{{ url_for('admin.vouchers', all=1) }}" class="btn btn-outline-secondary">Show all</a>
-                {% endif %}
-            </div>
+            <button type="submit" class="btn btn-primary">Create Voucher</button>
         </form>
+    </div>
+</div>
 
-        <table class="table table-striped">
+<div class="card">
+    <div class="table-wrap">
+        <table class="table">
             <thead>
                 <tr>
                     <th>Code</th>
@@ -40,11 +43,11 @@
                     <td><code>{{ v.code }}</code></td>
                     <td>{{ '%g'|format(v.minutes) }}</td>
                     <td>{{ v.created_at }}</td>
-                    <td>{{ v.redeemed_by or '-' }}</td>
+                    <td class="text-break">{{ v.redeemed_by or '-' }}</td>
                     <td>{{ v.redeemed_at or '-' }}</td>
                 </tr>
                 {% else %}
-                <tr><td colspan="5" class="text-center text-muted">No vouchers</td></tr>
+                <tr><td colspan="5" class="text-center muted">No vouchers</td></tr>
                 {% endfor %}
             </tbody>
         </table>

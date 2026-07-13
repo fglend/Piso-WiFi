@@ -38,10 +38,29 @@ class Firewall:
         run_cmd(['iptables', '-P', 'INPUT', 'ACCEPT'])
         run_cmd(['iptables', '-P', 'OUTPUT', 'ACCEPT'])
 
+        # The customer portal is LAN-facing. Do not expose its plain-HTTP
+        # admin login on the ISP/uplink network.
+        uplink_portal_rule = [
+            'INPUT', '-i', self.internet_interface,
+            '-p', 'tcp', '--dport', '5000', '-j', 'DROP',
+        ]
+        run_cmd(['iptables', '-D', *uplink_portal_rule], ignore_errors=True)
+        run_cmd(['iptables', '-I', 'INPUT', '1', *uplink_portal_rule[1:]])
+
         # Route all AP traffic through our chain (delete-then-insert keeps it single)
         run_cmd(['iptables', '-D', 'FORWARD', '-i', self.ap_interface, '-j', CHAIN],
                 ignore_errors=True)
         run_cmd(['iptables', '-I', 'FORWARD', '1', '-i', self.ap_interface, '-j', CHAIN])
+
+        # Replies enter from the uplink, not the LAN-side PISOWIFI chain. With
+        # the global FORWARD policy set to DROP they need an explicit return
+        # path for connections initiated by an allowed client.
+        return_rule = [
+            'FORWARD', '-i', self.internet_interface, '-o', self.ap_interface,
+            '-m', 'state', '--state', 'ESTABLISHED,RELATED', '-j', 'ACCEPT',
+        ]
+        run_cmd(['iptables', '-D', *return_rule], ignore_errors=True)
+        run_cmd(['iptables', '-I', 'FORWARD', '1', *return_rule[1:]])
 
         # NAT (delete-then-add keeps it idempotent)
         run_cmd(['iptables', '-t', 'nat', '-D', 'POSTROUTING',

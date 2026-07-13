@@ -1,8 +1,9 @@
-from unittest.mock import patch
+from unittest.mock import mock_open, patch
 
 import pytest
 
 from network.ap_manager import is_valid_mac
+from network.firewall import Firewall
 from network.qos import QoSManager
 from network_controller import NetworkController
 from tests.conftest import MAC
@@ -37,7 +38,26 @@ def test_unblock_mac(network_controller):
         assert network_controller.unblock_mac(MAC) is True
         args = mock_run.call_args_list[-1][0][0]
         assert 'ACCEPT' in args
-        assert MAC in args
+    assert MAC in args
+
+
+def test_firewall_allows_established_return_traffic_from_uplink():
+    firewall = Firewall('eth0', 'eth1', '192.168.4.1')
+
+    with patch('network.firewall.open', mock_open()), \
+            patch('network.firewall.run_cmd') as mock_run:
+        firewall.setup()
+
+    commands = [call.args[0] for call in mock_run.call_args_list]
+    assert [
+        'iptables', '-I', 'FORWARD', '1',
+        '-i', 'eth1', '-o', 'eth0',
+        '-m', 'state', '--state', 'ESTABLISHED,RELATED', '-j', 'ACCEPT',
+    ] in commands
+    assert [
+        'iptables', '-I', 'INPUT', '1',
+        '-i', 'eth1', '-p', 'tcp', '--dport', '5000', '-j', 'DROP',
+    ] in commands
 
 
 def test_block_rejects_invalid_mac(network_controller):

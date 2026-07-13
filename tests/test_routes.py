@@ -1,3 +1,5 @@
+from io import BytesIO
+
 from tests.conftest import MAC
 
 
@@ -55,8 +57,8 @@ def test_post_without_csrf_rejected(admin_client):
 def test_add_time_uses_configured_rate(admin_client, csrf_token, services):
     resp = post(admin_client, '/add_time', csrf_token, mac_address=MAC, amount=2)
     assert resp.status_code == 302
-    # 2 pesos * 5 minutes/peso
-    assert services.user_manager.check_balance(MAC) == 10
+    # 2 x the ₱1 tier (10 minutes) from the seeded rate table
+    assert services.user_manager.check_balance(MAC) == 20
     services.network_controller.unblock_mac.assert_called_with(MAC)
 
 
@@ -97,6 +99,14 @@ def test_portal_shows_own_device(client, services):
     assert MAC.encode() in resp.data
 
 
+def test_portal_displays_network_speed_in_mbps(client):
+    resp = client.get('/')
+
+    assert resp.status_code == 200
+    assert b'2.048 Mbps down / 1.024 Mbps up' in resp.data
+    assert b'kbps down' not in resp.data
+
+
 def test_redeem_voucher_via_portal(client, csrf_token, services):
     code = services.user_manager.create_voucher(15)
     resp = post(client, '/redeem', csrf_token, code=code)
@@ -114,3 +124,100 @@ def test_request_upgrade_uses_requester_mac(client, csrf_token, services):
     services.user_manager.add_time(MAC, 5, 25)
     post(client, '/request_upgrade', csrf_token)
     assert services.user_manager.get_device_info(MAC)['upgrade_requested'] == 1
+
+
+def test_settings_page(client, admin_client):
+    # anonymous is redirected; admin sees the settings form
+    resp = admin_client.get('/admin/settings')
+    assert resp.status_code == 200
+    assert b'System Settings' in resp.data
+    assert b'name="minutes_per_peso"' in resp.data
+    assert b'visible_in_portal' not in resp.data
+
+
+# --- carousel posts -------------------------------------------------------
+
+def test_portal_only_renders_posts_marked_visible(client, services):
+    services.user_manager.create_post(
+        'Visible promotion', 'Shown in the carousel', 'visible.jpg', active=True)
+    services.user_manager.create_post(
+        'Hidden promotion', 'Kept out of the carousel', 'hidden.jpg', active=False)
+
+    resp = client.get('/')
+
+    assert resp.status_code == 200
+    assert b'Visible promotion' in resp.data
+    assert b'visible.jpg' in resp.data
+    assert b'Hidden promotion' not in resp.data
+    assert b'hidden.jpg' not in resp.data
+
+
+def test_admin_toggles_visibility_for_only_the_selected_post(
+        admin_client, csrf_token, services):
+    services.user_manager.create_post('First post', '', 'first.jpg', active=True)
+    services.user_manager.create_post('Second post', '', 'second.jpg', active=True)
+    posts = {item['title']: item for item in services.user_manager.get_posts()}
+
+    resp = post(admin_client, '/admin/posts/toggle', csrf_token,
+                post_id=posts['First post']['id'], active=0)
+
+    assert resp.status_code == 302
+    states = {item['title']: item['active']
+              for item in services.user_manager.get_posts()}
+    assert states == {'First post': 0, 'Second post': 1}
+
+
+def test_posts_admin_page_has_per_post_visibility_controls(
+        admin_client, services):
+    services.user_manager.create_post('Visible post', '', 'visible.jpg', active=True)
+    services.user_manager.create_post('Hidden post', '', 'hidden.jpg', active=False)
+
+    resp = admin_client.get('/admin/posts')
+
+    assert resp.status_code == 200
+    assert b'Visible in portal carousel' in resp.data
+    assert b'Visible post' in resp.data
+    assert b'Hidden post' in resp.data
+    assert b'Visible' in resp.data
+    assert b'Hidden' in resp.data
+
+
+def test_admin_chooses_initial_visibility_for_each_post(
+        admin_client, csrf_token, services, monkeypatch):
+    filenames = iter(('visible.jpg', 'hidden.jpg'))
+    monkeypatch.setattr('routes.admin._save_image', lambda _file: next(filenames))
+
+    visible_response = post(
+        admin_client, '/admin/posts', csrf_token,
+        title='Visible from creation', description='',
+        visible_in_portal='1')
+    hidden_response = post(
+        admin_client, '/admin/posts', csrf_token,
+        title='Hidden from creation', description='')
+
+    assert visible_response.status_code == 302
+    assert hidden_response.status_code == 302
+    states = {item['title']: item['active']
+              for item in services.user_manager.get_posts()}
+    assert states == {
+        'Visible from creation': 1,
+        'Hidden from creation': 0,
+    }
+
+
+def test_post_upload_rejects_spoofed_image_extension(
+        admin_client, csrf_token, services):
+    resp = admin_client.post('/admin/posts', data={
+        'csrf_token': csrf_token,
+        'title': 'Not really an image',
+        'visible_in_portal': '1',
+        'image': (BytesIO(b'<script>alert(1)</script>'), 'spoofed.jpg'),
+    })
+
+    assert resp.status_code == 302
+    assert services.user_manager.get_posts() == []
+
+
+def test_responses_disable_content_type_sniffing(client, app):
+    assert app.config['MAX_CONTENT_LENGTH'] == 5 * 1024 * 1024
+    assert client.get('/').headers['X-Content-Type-Options'] == 'nosniff'

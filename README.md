@@ -4,7 +4,10 @@ A Python-based PISO WIFI management system designed for Orange Pi One that enabl
 
 ## Features
 
-- Pay-per-use WiFi access (configurable rate, default 1 peso = 5 minutes via `RATE_MINUTES_PER_PESO`)
+- Pay-per-use WiFi access with an admin-editable price tier table (`/admin/rates`,
+  e.g. ₱1 = 10 min … ₱500 = 30 days); amounts decompose greedily across tiers
+  (₱6 = ₱5 tier + ₱1 tier). `RATE_MINUTES_PER_PESO` remains as the fallback rate
+  for amounts below the smallest tier or when the table is empty
 - MAC address-based device tracking and access control (dedicated `PISOWIFI` iptables chain)
 - Captive portal for users: view own balance/plan, redeem voucher codes, request premium upgrades
 - Web-based admin dashboard (login required) for:
@@ -79,19 +82,21 @@ device. Configure the slot's pulses-per-peso to match
 `COINSLOT_PULSES_PER_PESO`.
 
 Wire the relay's **NO (normally-open) + COM** contacts in series with the
-acceptor's 12V line - not NC. That way a de-energized relay (app not running,
-mid-boot, crashed) means the contact is open and the acceptor has no power at
-all, rather than defaulting to "accepting coins nobody gets credited for."
+acceptor's 12V line - not NC. That way loss of relay/Pi power opens the
+contact and the acceptor has no power. A software-only crash can leave a GPIO
+output latched until systemd restarts the app, so use a hardware default-OFF
+bias (or watchdog relay where required) rather than relying on software alone.
 Set `COINSLOT_RELAY_ACTIVE_HIGH=true` only if your relay board energizes on a
 HIGH signal; most cheap opto-isolated boards are active-low (the default).
 
 > Note: if the coinslot runs on 12V, power it from the 12V side of your
-> step-down converter and make sure the COIN/SIG signal line is pulled to
-> 3.3V levels (open-collector output + pull-up to 3.3V), never 5V/12V directly
-> into the GPIO. Before wiring the relay permanently, verify its control pin
-> reads low across a few power cycles (multimeter or `cat
-> /sys/class/gpio/gpio7/value` right after boot) so a boot-time GPIO glitch
-> can't unexpectedly energize it.
+> step-down converter and route COIN/SIG through a suitable 12V-to-3.3V
+> optocoupler/level shifter; never put 5V/12V directly into GPIO. Before
+> wiring the relay permanently, verify its control pin stays at the inactive
+> level across several power cycles (with `cat
+> /sys/class/gpio/gpio7/value`, default active-low must read `1` while off;
+> active-high must read `0`) so a boot-time GPIO glitch cannot unexpectedly
+> energize it. See `ORANGE_PI_PC_SETUP.md` for the complete wiring procedure.
 
 ## System Requirements
 

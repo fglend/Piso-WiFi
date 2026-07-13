@@ -91,3 +91,24 @@ def test_session_clock_persistence(user_manager):
 
 def test_check_health(user_manager):
     assert user_manager.check_health() is True
+
+
+def test_post_visibility_is_independent_per_post(user_manager):
+    assert user_manager.create_post('Visible post', 'Shown', 'visible.jpg', active=True)
+    assert user_manager.create_post('Hidden post', 'Not shown', 'hidden.jpg', active=False)
+
+    posts = {post['title']: post for post in user_manager.get_posts()}
+    assert posts['Visible post']['active'] == 1
+    assert posts['Hidden post']['active'] == 0
+    assert [post['title'] for post in user_manager.get_posts(active_only=True)] == [
+        'Visible post'
+    ]
+
+    assert user_manager.set_post_active(posts['Hidden post']['id'], True)
+    assert {post['title'] for post in user_manager.get_posts(active_only=True)} == {
+        'Visible post', 'Hidden post'
+    }
+
+
+def test_setting_visibility_for_missing_post_fails(user_manager):
+    assert user_manager.set_post_active(999_999, False) is False

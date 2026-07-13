@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+
+{% block title %}Carousel Posts{% endblock %}
+
+{% block content %}
+<div class="portal-header">
+    <div>
+        <h1 class="mb-0">Carousel Posts</h1>
+        <p class="muted mb-0">Publish announcements and choose which individual posts appear in the portal.</p>
+    </div>
+</div>
+
+<section class="card">
+    <div class="card-head">
+        <div>
+            <h2 class="mb-0">New post</h2>
+            <div class="muted small">Images are displayed in the customer portal carousel.</div>
+        </div>
+    </div>
+    <div class="card-body">
+        <form action="{{ url_for('admin.posts') }}" method="POST" enctype="multipart/form-data" class="stack">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <div class="form-grid">
+                <div>
+                    <label for="post-title">Title</label>
+                    <input id="post-title" name="title" type="text" maxlength="120" required>
+                </div>
+                <div>
+                    <label for="post-image">Image</label>
+                    <input id="post-image" name="image" type="file" accept="image/jpeg,image/png,image/gif,image/webp" required>
+                </div>
+            </div>
+            <div>
+                <label for="post-description">Description</label>
+                <textarea id="post-description" name="description" maxlength="500" rows="3"></textarea>
+            </div>
+            <label class="check-row" for="visible-in-portal">
+                <input id="visible-in-portal" name="visible_in_portal" type="checkbox" value="1" checked>
+                <span>
+                    Visible in portal carousel
+                    <small>Turn this off to save the post without showing it to customers.</small>
+                </span>
+            </label>
+            <div><button type="submit" class="btn btn-primary">Create post</button></div>
+        </form>
+    </div>
+</section>
+
+<section aria-labelledby="existing-posts-title">
+    <div class="row-between mb-3">
+        <div>
+            <h2 class="mb-0" id="existing-posts-title">Existing posts</h2>
+            <div class="muted small">Visibility is controlled separately for every post.</div>
+        </div>
+    </div>
+    {% if posts %}
+    <div class="post-grid">
+        {% for post in posts %}
+        <article class="card post-card">
+            <img src="{{ url_for('static', filename='uploads/' ~ post.image_file) }}" alt="">
+            <div class="card-body stack">
+                <div class="row-between">
+                    <div>
+                        <h3 class="mb-0">{{ post.title }}</h3>
+                        <div class="muted small">{{ post.created_at }}</div>
+                    </div>
+                    {% if post.active %}
+                    <span class="badge badge-ok">Visible</span>
+                    {% else %}
+                    <span class="badge badge-muted">Hidden</span>
+                    {% endif %}
+                </div>
+                {% if post.description %}<p class="muted mb-0">{{ post.description }}</p>{% endif %}
+                <div class="form-row post-actions">
+                    <form action="{{ url_for('admin.toggle_post') }}" method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <input type="hidden" name="post_id" value="{{ post.id }}">
+                        <input type="hidden" name="active" value="{{ 0 if post.active else 1 }}">
+                        <button type="submit" class="btn btn-ghost btn-sm">
+                            {{ 'Hide from portal' if post.active else 'Show in portal' }}
+                        </button>
+                    </form>
+                    <form action="{{ url_for('admin.delete_post') }}" method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <input type="hidden" name="post_id" value="{{ post.id }}">
+                        <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+                    </form>
+                </div>
+            </div>
+        </article>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="card"><div class="card-body muted">No carousel posts yet.</div></div>
+    {% endif %}
+</section>
+{% endblock %}

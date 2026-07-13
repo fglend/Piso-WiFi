@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 class Services:
     def __init__(self, settings=None, manage_hardware=True):
+        self._shutdown = False
         self.settings = settings or load_settings()
 
         logger.info("Initializing user manager...")
@@ -43,6 +44,24 @@ class Services:
 
         if manage_hardware:
             self.network_controller.reconcile(self.user_manager.get_active_users())
+
+    def shutdown(self):
+        """Release hardware promptly during a graceful process shutdown."""
+        if self._shutdown:
+            return
+        succeeded = True
+        if self.coinslot:
+            try:
+                self.coinslot.stop()
+            except Exception as exc:
+                succeeded = False
+                logger.error(f"Could not stop coinslot safely: {exc}")
+        try:
+            self.time_manager.stop()
+        except Exception as exc:
+            succeeded = False
+            logger.error(f"Could not stop time manager: {exc}")
+        self._shutdown = succeeded
 
     def app_setting_defaults(self):
         return {

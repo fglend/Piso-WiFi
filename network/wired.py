@@ -57,8 +57,9 @@ log-dhcp
         self.logger.info("Wired gateway configuration written")
 
     def start(self):
-        run_cmd(['nmcli', 'device', 'set', self.ap_interface, 'managed', 'no'],
-                ignore_errors=True)
+        if command_exists('nmcli'):
+            run_cmd(['nmcli', 'device', 'set', self.ap_interface, 'managed', 'no'],
+                    ignore_errors=True)
         run_cmd(['ip', 'addr', 'flush', 'dev', self.ap_interface])
         run_cmd(['ip', 'addr', 'add', f'{self.ip}/24', 'dev', self.ap_interface])
         run_cmd(['ip', 'link', 'set', self.ap_interface, 'up'])
@@ -67,8 +68,9 @@ log-dhcp
 
     def stop(self):
         run_cmd(['systemctl', 'stop', 'dnsmasq'], ignore_errors=True)
-        run_cmd(['nmcli', 'device', 'set', self.ap_interface, 'managed', 'yes'],
-                ignore_errors=True)
+        if command_exists('nmcli'):
+            run_cmd(['nmcli', 'device', 'set', self.ap_interface, 'managed', 'yes'],
+                    ignore_errors=True)
         self.logger.info("Wired gateway stopped")
 
     def is_hostapd_running(self):

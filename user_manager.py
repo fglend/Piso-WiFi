@@ -102,12 +102,39 @@ class UserManager:
                 )
             ''')
 
+            # Advertisement posts shown in the portal/dashboard carousel
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS posts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL,
+                    description TEXT DEFAULT '',
+                    image_file TEXT NOT NULL,
+                    active BOOLEAN DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+
+            # Pricing tiers: pesos -> minutes
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS rates (
+                    pesos INTEGER PRIMARY KEY,
+                    minutes REAL NOT NULL
+                )
+            ''')
+
             # Additive column migrations for databases created by older versions
             self._add_column_if_missing(c, 'transactions', 'source', "TEXT DEFAULT 'cash'")
 
             # Seed plans
             c.execute('''INSERT OR IGNORE INTO plans (name, download_kbps, upload_kbps)
                          VALUES ('default', 2048, 1024), ('premium', 8096, 8096)''')
+
+            # Seed rates only when the table is empty, so tiers an admin
+            # deleted stay deleted across restarts
+            if c.execute('SELECT COUNT(*) FROM rates').fetchone()[0] == 0:
+                from pricing import DEFAULT_RATES
+                c.executemany('INSERT INTO rates (pesos, minutes) VALUES (?, ?)',
+                              sorted(DEFAULT_RATES.items()))
 
             conn.commit()
         except Exception as e:
@@ -152,6 +179,116 @@ class UserManager:
             return True
         except Exception as e:
             self.logger.error(f"Error saving app settings: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    # --- advertisement posts -----------------------------------------------------
+
+    def get_posts(self, active_only=False):
+        conn = self._connect()
+        try:
+            query = ('SELECT id, title, description, image_file, active, created_at '
+                     'FROM posts')
+            if active_only:
+                query += ' WHERE active = 1'
+            query += ' ORDER BY created_at DESC, id DESC'
+            return [dict(r) for r in conn.execute(query).fetchall()]
+        except Exception as e:
+            self.logger.error(f"Error listing posts: {e}")
+            return []
+        finally:
+            conn.close()
+
+    def create_post(self, title, description, image_file, active=True):
+        conn = self._connect()
+        try:
+            conn.execute(
+                'INSERT INTO posts (title, description, image_file, active) '
+                'VALUES (?, ?, ?, ?)',
+                (title, description, image_file, 1 if active else 0))
+            conn.commit()
+            return True
+        except Exception as e:
+            self.logger.error(f"Error creating post: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    def set_post_active(self, post_id, active):
+        conn = self._connect()
+        try:
+            cursor = conn.execute('UPDATE posts SET active = ? WHERE id = ?',
+                                  (1 if active else 0, post_id))
+            if cursor.rowcount == 0:
+                return False
+            conn.commit()
+            return True
+        except Exception as e:
+            self.logger.error(f"Error updating post {post_id}: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    def delete_post(self, post_id):
+        """Delete a post; returns its image_file so the caller can remove it."""
+        conn = self._connect()
+        try:
+            row = conn.execute('SELECT image_file FROM posts WHERE id = ?',
+                               (post_id,)).fetchone()
+            if not row:
+                return None
+            conn.execute('DELETE FROM posts WHERE id = ?', (post_id,))
+            conn.commit()
+            return row['image_file']
+        except Exception as e:
+            self.logger.error(f"Error deleting post {post_id}: {e}")
+            conn.rollback()
+            return None
+        finally:
+            conn.close()
+
+    # --- pricing tiers ---------------------------------------------------------
+
+    def get_rates(self):
+        """Pricing tiers as {pesos: minutes}, ascending by pesos."""
+        conn = self._connect()
+        try:
+            rows = conn.execute('SELECT pesos, minutes FROM rates ORDER BY pesos').fetchall()
+            return {row['pesos']: row['minutes'] for row in rows}
+        except Exception as e:
+            self.logger.error(f"Error listing rates: {e}")
+            return {}
+        finally:
+            conn.close()
+
+    def upsert_rate(self, pesos, minutes):
+        conn = self._connect()
+        try:
+            conn.execute('''
+                INSERT INTO rates (pesos, minutes) VALUES (?, ?)
+                ON CONFLICT(pesos) DO UPDATE SET minutes = excluded.minutes
+            ''', (pesos, minutes))
+            conn.commit()
+            return True
+        except Exception as e:
+            self.logger.error(f"Error saving rate ₱{pesos}: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    def delete_rate(self, pesos):
+        conn = self._connect()
+        try:
+            conn.execute('DELETE FROM rates WHERE pesos = ?', (pesos,))
+            conn.commit()
+            return True
+        except Exception as e:
+            self.logger.error(f"Error deleting rate ₱{pesos}: {e}")
             conn.rollback()
             return False
         finally:

@@ -7,6 +7,7 @@ from flask import (Blueprint, current_app, flash, jsonify, redirect,
                    render_template, request, session, url_for)
 
 from auth import verify_admin
+from pricing import format_duration
 
 portal_bp = Blueprint('portal', __name__)
 logger = logging.getLogger(__name__)
@@ -51,9 +52,16 @@ def index():
             'plan': 'default', 'upgrade_requested': False,
         }
         device = {'mac_address': mac, **info}
+    rates = [
+        {'pesos': pesos, 'label': format_duration(minutes)}
+        for pesos, minutes in svc.user_manager.get_rates().items()
+    ]
+    posts = svc.user_manager.get_posts(active_only=True)
     return render_template(
         'portal.html',
         device=device,
+        rates=rates,
+        posts=posts,
         coinslot_enabled=svc.coinslot is not None,
         coin_minutes_per_peso=svc.settings.minutes_per_peso,
         coin_claim_timeout=svc.settings.coinslot_claim_timeout,

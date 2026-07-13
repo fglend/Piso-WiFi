@@ -1,12 +1,17 @@
 """Admin dashboard and management actions. Every route requires an admin
 session and every submitted MAC address is validated before use."""
 import logging
+import os
+from pathlib import Path
+import re
+import secrets
 
 from flask import (Blueprint, current_app, flash, jsonify, redirect,
                    render_template, request, url_for)
 
 from auth import admin_required
 from network.ap_manager import is_valid_mac
+from pricing import compute_minutes, format_duration
 
 admin_bp = Blueprint('admin', __name__)
 logger = logging.getLogger(__name__)
@@ -100,10 +105,14 @@ def dashboard_live():
     })
 
 
-@admin_bp.route('/admin/settings', methods=['POST'])
+@admin_bp.route('/admin/settings', methods=['GET', 'POST'])
 @admin_required
 def update_settings():
     svc = _services()
+    if request.method == 'GET':
+        app_settings = svc.refresh_runtime_settings()
+        return render_template('settings.html', app_settings=app_settings)
+
     minutes_per_peso = _form_number('minutes_per_peso', minimum=1, maximum=240, cast=float)
     claim_timeout = _form_number('coinslot_claim_timeout', minimum=10, maximum=600)
     pulses_per_peso = _form_number('coinslot_pulses_per_peso', minimum=1, maximum=20)
@@ -116,7 +125,7 @@ def update_settings():
         refresh_seconds, default_download, default_upload,
     ):
         flash('Settings must use valid numbers within the allowed ranges', 'error')
-        return redirect(url_for('admin.dashboard'))
+        return redirect(url_for('admin.update_settings'))
 
     values = {
         'minutes_per_peso': minutes_per_peso,
@@ -140,7 +149,7 @@ def update_settings():
         flash('System settings updated', 'success')
     else:
         flash('Error updating system settings', 'error')
-    return redirect(url_for('admin.dashboard'))
+    return redirect(url_for('admin.update_settings'))
 
 
 @admin_bp.route('/add_time', methods=['POST'])
@@ -155,7 +164,8 @@ def add_time():
             flash('Please enter a valid amount', 'error')
         return redirect(url_for('admin.dashboard'))
 
-    minutes = amount * svc.settings.minutes_per_peso
+    minutes = compute_minutes(amount, svc.user_manager.get_rates(),
+                              svc.settings.minutes_per_peso)
     logger.info(f"Adding {minutes} minutes for MAC {mac} (₱{amount})")
     if svc.user_manager.add_time(mac, amount, minutes):
         svc.network_controller.unblock_mac(mac)
@@ -241,6 +251,156 @@ def manage_plan():
         flash('Plan updated but there was an issue applying bandwidth limits', 'warning')
     logger.info(f"Updated plan for {mac} to {new_plan} ({download}/{upload})")
     return redirect(url_for('admin.dashboard'))
+
+
+ALLOWED_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
+GENERATED_IMAGE_NAME = re.compile(
+    r'^[0-9a-f]{16}\.(?:jpg|jpeg|png|gif|webp)$')
+
+
+def _matches_image_format(header, extension):
+    if extension in {'.jpg', '.jpeg'}:
+        return header.startswith(b'\xff\xd8\xff')
+    if extension == '.png':
+        return header.startswith(b'\x89PNG\r\n\x1a\n')
+    if extension == '.gif':
+        return header.startswith((b'GIF87a', b'GIF89a'))
+    if extension == '.webp':
+        return header.startswith(b'RIFF') and header[8:12] == b'WEBP'
+    return False
+
+
+def _upload_dir():
+    path = os.path.join(current_app.static_folder, 'uploads')
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _save_image(file):
+    """Store an uploaded image under a random server-side name; returns the
+    filename or None if the file is missing or has a disallowed extension."""
+    if not file or not file.filename:
+        return None
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in ALLOWED_IMAGE_EXTENSIONS:
+        return None
+    header = file.stream.read(16)
+    file.stream.seek(0)
+    if not _matches_image_format(header, ext):
+        return None
+    name = secrets.token_hex(8) + ext
+    file.save(os.path.join(_upload_dir(), name))
+    return name
+
+
+def _remove_image(image_file):
+    """Remove only server-generated image names contained by the upload dir."""
+    if not image_file or not GENERATED_IMAGE_NAME.fullmatch(image_file):
+        logger.warning('Refusing to remove unsafe post image name: %r', image_file)
+        return False
+    upload_dir = Path(_upload_dir()).resolve()
+    image_path = upload_dir / image_file
+    if image_path.parent != upload_dir or image_path.is_symlink():
+        logger.warning('Refusing to remove post image outside upload directory')
+        return False
+    try:
+        image_path.unlink()
+        return True
+    except FileNotFoundError:
+        return True
+    except OSError as exc:
+        logger.warning('Could not remove post image %s: %s', image_file, exc)
+        return False
+
+
+@admin_bp.route('/admin/posts', methods=['GET', 'POST'])
+@admin_required
+def posts():
+    svc = _services()
+    if request.method == 'POST':
+        title = _form_text('title', maximum=120)
+        description = _form_text('description', maximum=500)
+        active = request.form.get('visible_in_portal') == '1'
+        if not title:
+            flash('Please enter a title', 'error')
+            return redirect(url_for('admin.posts'))
+        image_file = _save_image(request.files.get('image'))
+        if not image_file:
+            flash('Please attach a JPG, PNG, GIF or WEBP image', 'error')
+            return redirect(url_for('admin.posts'))
+        if svc.user_manager.create_post(title, description, image_file, active=active):
+            flash('Post published', 'success')
+        else:
+            _remove_image(image_file)
+            flash('Error creating post', 'error')
+        return redirect(url_for('admin.posts'))
+
+    return render_template('posts.html', posts=svc.user_manager.get_posts())
+
+
+@admin_bp.route('/admin/posts/toggle', methods=['POST'])
+@admin_required
+def toggle_post():
+    svc = _services()
+    post_id = _form_number('post_id', minimum=1)
+    active = request.form.get('active') == '1'
+    if post_id is None or not svc.user_manager.set_post_active(post_id, active):
+        flash('Error updating post', 'error')
+    else:
+        flash('Post shown in carousel' if active else 'Post hidden', 'success')
+    return redirect(url_for('admin.posts'))
+
+
+@admin_bp.route('/admin/posts/delete', methods=['POST'])
+@admin_required
+def delete_post():
+    svc = _services()
+    post_id = _form_number('post_id', minimum=1)
+    image_file = svc.user_manager.delete_post(post_id) if post_id else None
+    if image_file is None:
+        flash('Error deleting post', 'error')
+    else:
+        if _remove_image(image_file):
+            flash('Post deleted', 'success')
+        else:
+            flash('Post deleted, but its image could not be removed', 'warning')
+    return redirect(url_for('admin.posts'))
+
+
+@admin_bp.route('/admin/rates', methods=['GET', 'POST'])
+@admin_required
+def rates():
+    svc = _services()
+    if request.method == 'POST':
+        pesos = _form_number('pesos', minimum=1, maximum=10000)
+        minutes = _form_number('minutes', minimum=1, maximum=525600, cast=float)
+        if pesos is None or minutes is None:
+            flash('Enter a valid peso amount and minutes', 'error')
+        elif svc.user_manager.upsert_rate(pesos, minutes):
+            flash(f'Rate saved: ₱{pesos} = {format_duration(minutes)}', 'success')
+        else:
+            flash('Error saving rate', 'error')
+        return redirect(url_for('admin.rates'))
+
+    svc.refresh_runtime_settings()
+    rate_rows = [
+        {'pesos': pesos, 'minutes': minutes, 'label': format_duration(minutes)}
+        for pesos, minutes in svc.user_manager.get_rates().items()
+    ]
+    return render_template('rates.html', rates=rate_rows,
+                           fallback_rate=svc.settings.minutes_per_peso)
+
+
+@admin_bp.route('/admin/rates/delete', methods=['POST'])
+@admin_required
+def delete_rate():
+    svc = _services()
+    pesos = _form_number('pesos', minimum=1)
+    if pesos is None or not svc.user_manager.delete_rate(pesos):
+        flash('Error deleting rate', 'error')
+    else:
+        flash(f'Deleted the ₱{pesos} tier', 'success')
+    return redirect(url_for('admin.rates'))
 
 
 @admin_bp.route('/vouchers', methods=['GET', 'POST'])

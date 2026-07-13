@@ -32,7 +32,9 @@ class TimeManager:
     def stop(self):
         self.running = False
         if self.thread:
-            self.thread.join()
+            self.thread.join(timeout=3)
+            if self.thread.is_alive():
+                self.logger.warning('Time manager thread did not stop within 3 seconds')
 
     def _reset_session_clocks(self):
         """On startup, restart the clock for connected devices and drop the rest

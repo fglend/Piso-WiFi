@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+
+{% block title %}Pricing{% endblock %}
+
+{% block content %}
+<div class="row-between mb-3">
+    <div>
+        <h1 class="mb-0">Pricing</h1>
+        <p class="muted mb-0">
+            Coin sessions and admin top-ups use the best combination of these tiers
+            (e.g. ₱6 = the ₱5 tier + the ₱1 tier).
+        </p>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-head">
+        <h2 class="mb-0">Add or Update a Tier</h2>
+        <div class="muted small">Using an existing peso amount overwrites that tier.</div>
+    </div>
+    <div class="card-body">
+        <form action="{{ url_for('admin.rates') }}" method="POST" class="form-row">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <div style="max-width: 160px;">
+                <label for="rate-pesos">Pesos</label>
+                <input type="number" id="rate-pesos" name="pesos" min="1" max="10000" placeholder="e.g. 5" required>
+            </div>
+            <div style="max-width: 200px;">
+                <label for="rate-minutes">Minutes</label>
+                <input type="number" id="rate-minutes" name="minutes" min="1" max="525600" step="any" placeholder="e.g. 60" required>
+            </div>
+            <button type="submit" class="btn btn-primary">Save Tier</button>
+        </form>
+        <p class="muted small mt-2 mb-0">
+            Cheat sheet: 1 hour = 60 &middot; 6 hours = 360 &middot; 1 day = 1440 &middot; 7 days = 10080 &middot; 30 days = 43200
+        </p>
+    </div>
+</div>
+
+<div class="card">
+    <div class="table-wrap">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Amount</th>
+                    <th>Minutes</th>
+                    <th>Duration</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for rate in rates %}
+                <tr>
+                    <td><strong>₱{{ rate.pesos }}</strong></td>
+                    <td>{{ '%g'|format(rate.minutes) }}</td>
+                    <td>{{ rate.label }}</td>
+                    <td class="text-end">
+                        <form action="{{ url_for('admin.delete_rate') }}" method="POST" class="mb-0">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <input type="hidden" name="pesos" value="{{ rate.pesos }}">
+                            <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="4" class="text-center muted">
+                        No tiers defined - everything is charged at the fallback rate of
+                        {{ '%g'|format(fallback_rate) }} minutes per peso.
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<p class="muted small">
+    Amounts that don't fit the tiers exactly (e.g. leftover pesos below the smallest tier)
+    earn the fallback rate of {{ '%g'|format(fallback_rate) }} minutes per peso, set on the
+    <a href="{{ url_for('admin.dashboard') }}">dashboard settings</a>.
+</p>
+{% endblock %}

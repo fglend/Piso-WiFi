@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+
+{% block title %}Settings{% endblock %}
+
+{% block content %}
+<div class="row-between mb-3">
+    <div>
+        <h1 class="mb-0">System Settings</h1>
+        <p class="muted mb-0">Changes apply to new top-ups and portal sessions immediately.</p>
+    </div>
+    <a href="{{ url_for('admin.rates') }}" class="btn btn-ghost btn-sm">Edit Price Tiers</a>
+</div>
+
+<div class="card">
+    <div class="card-head">
+        <h2 class="mb-0">Pricing &amp; Coinslot</h2>
+    </div>
+    <div class="card-body">
+        <form action="{{ url_for('admin.update_settings') }}" method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <div class="form-grid mb-3">
+                <div>
+                    <label for="minutes_per_peso">Fallback minutes per peso</label>
+                    <input id="minutes_per_peso" name="minutes_per_peso" type="number" min="1" max="240" step="0.5"
+                           value="{{ app_settings.minutes_per_peso }}" required>
+                    <div class="muted small mt-2">Used only for amounts the price tiers can't cover.</div>
+                </div>
+                <div>
+                    <label for="coinslot_claim_timeout">Coin session seconds</label>
+                    <input id="coinslot_claim_timeout" name="coinslot_claim_timeout" type="number" min="10" max="600"
+                           value="{{ app_settings.coinslot_claim_timeout }}" required>
+                </div>
+                <div>
+                    <label for="coinslot_pulses_per_peso">Pulses per peso</label>
+                    <input id="coinslot_pulses_per_peso" name="coinslot_pulses_per_peso" type="number" min="1" max="20"
+                           value="{{ app_settings.coinslot_pulses_per_peso }}" required>
+                </div>
+            </div>
+
+            <h2>Portal</h2>
+            <div class="form-grid mb-3">
+                <div>
+                    <label for="portal_title">Portal title</label>
+                    <input id="portal_title" name="portal_title" type="text" maxlength="120"
+                           value="{{ app_settings.portal_title }}" required>
+                </div>
+                <div>
+                    <label for="portal_subtitle">Coin instructions</label>
+                    <input id="portal_subtitle" name="portal_subtitle" type="text" maxlength="180"
+                           value="{{ app_settings.portal_subtitle }}" required>
+                </div>
+            </div>
+
+            <h2>Defaults &amp; Dashboard</h2>
+            <div class="form-grid mb-3">
+                <div>
+                    <label for="dashboard_refresh_seconds">Dashboard refresh seconds</label>
+                    <input id="dashboard_refresh_seconds" name="dashboard_refresh_seconds" type="number" min="3" max="120"
+                           value="{{ app_settings.dashboard_refresh_seconds }}" required>
+                </div>
+                <div>
+                    <label for="default_download_kbps">Default download kbps</label>
+                    <input id="default_download_kbps" name="default_download_kbps" type="number" min="32" max="100000"
+                           value="{{ app_settings.default_download_kbps }}" required>
+                </div>
+                <div>
+                    <label for="default_upload_kbps">Default upload kbps</label>
+                    <input id="default_upload_kbps" name="default_upload_kbps" type="number" min="32" max="100000"
+                           value="{{ app_settings.default_upload_kbps }}" required>
+                </div>
+            </div>
+
+            <button type="submit" class="btn btn-primary">Save Settings</button>
+        </form>
+    </div>
+</div>
+{% endblock %}
