@@ -17,7 +17,7 @@
                     <a href="{{ url_for('admin.rates') }}"
                        {% if request.endpoint == 'admin.rates' %}class="active"{% endif %}>Pricing</a>
                     <a href="{{ url_for('admin.posts') }}"
-                       {% if request.endpoint in ('admin.posts', 'admin.toggle_post', 'admin.delete_post') %}class="active"{% endif %}>Posts</a>
+                       {% if request.endpoint in ('admin.posts', 'admin.update_post', 'admin.toggle_post', 'admin.delete_post') %}class="active"{% endif %}>Posts</a>
                     <a href="{{ url_for('admin.vouchers') }}"
                        {% if request.endpoint == 'admin.vouchers' %}class="active"{% endif %}>Vouchers</a>
                     <a href="{{ url_for('admin.transactions') }}"

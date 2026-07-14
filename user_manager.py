@@ -390,6 +390,24 @@ class UserManager:
         finally:
             conn.close()
 
+    def update_post_description(self, post_id, description):
+        conn = self._connect()
+        try:
+            cursor = conn.execute(
+                'UPDATE posts SET description = ? WHERE id = ?',
+                (description, post_id))
+            if cursor.rowcount == 0:
+                return False
+            conn.commit()
+            return True
+        except Exception as e:
+            self.logger.error(
+                f"Error updating post description {post_id}: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
     def delete_post(self, post_id):
         """Delete a post; returns its image_file so the caller can remove it."""
         conn = self._connect()

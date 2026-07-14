@@ -375,6 +375,20 @@ def toggle_post():
     return redirect(url_for('admin.posts'))
 
 
+@admin_bp.route('/admin/posts/update', methods=['POST'])
+@admin_required
+def update_post():
+    svc = _services()
+    post_id = _form_number('post_id', minimum=1)
+    description = _form_text('description', maximum=500)
+    if post_id is None or not svc.user_manager.update_post_description(
+            post_id, description):
+        flash('Error updating post description', 'error')
+    else:
+        flash('Post description updated', 'success')
+    return redirect(url_for('admin.posts'))
+
+
 @admin_bp.route('/admin/posts/delete', methods=['POST'])
 @admin_required
 def delete_post():

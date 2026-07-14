@@ -70,7 +70,19 @@
                     <span class="badge badge-muted">Hidden</span>
                     {% endif %}
                 </div>
-                {% if post.description %}<p class="muted mb-0">{{ post.description }}</p>{% endif %}
+                <form action="{{ url_for('admin.update_post') }}" method="POST" class="stack">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="post_id" value="{{ post.id }}">
+                    <div>
+                        <label for="post-description-{{ post.id }}">Description</label>
+                        <textarea id="post-description-{{ post.id }}" name="description"
+                                  maxlength="500" rows="3">{{ post.description }}</textarea>
+                    </div>
+                    <div>
+                        <button type="submit" class="btn btn-primary btn-sm"
+                                aria-label="Update description for {{ post.title }}">Update</button>
+                    </div>
+                </form>
                 <div class="form-row post-actions">
                     <form action="{{ url_for('admin.toggle_post') }}" method="POST">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

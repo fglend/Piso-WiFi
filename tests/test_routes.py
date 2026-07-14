@@ -233,6 +233,59 @@ def test_posts_admin_page_has_per_post_visibility_controls(
     assert b'Hidden' in resp.data
 
 
+def test_admin_updates_post_description(
+        admin_client, csrf_token, services):
+    services.user_manager.create_post(
+        'Editable post', 'Original description', 'editable.jpg', active=True)
+    post_item = services.user_manager.get_posts()[0]
+
+    response = post(
+        admin_client, '/admin/posts/update', csrf_token,
+        post_id=post_item['id'], description='Updated description')
+
+    assert response.status_code == 302
+    assert services.user_manager.get_posts()[0]['description'] == (
+        'Updated description')
+
+    page = admin_client.get('/admin/posts')
+    assert b'action="/admin/posts/update"' in page.data
+    assert b'Updated description' in page.data
+    assert b'>Update<' in page.data
+
+
+def test_post_description_update_is_limited_to_500_characters(
+        admin_client, csrf_token, services):
+    services.user_manager.create_post('Post', '', 'post.jpg', active=True)
+    post_item = services.user_manager.get_posts()[0]
+
+    post(admin_client, '/admin/posts/update', csrf_token,
+         post_id=post_item['id'], description='x' * 600)
+
+    assert len(services.user_manager.get_posts()[0]['description']) == 500
+
+
+def test_post_description_update_requires_csrf(admin_client, services):
+    services.user_manager.create_post(
+        'Protected post', 'Original', 'protected.jpg', active=True)
+    post_item = services.user_manager.get_posts()[0]
+
+    response = admin_client.post('/admin/posts/update', data={
+        'post_id': post_item['id'], 'description': 'Unauthorized change'})
+
+    assert response.status_code == 400
+    assert services.user_manager.get_posts()[0]['description'] == 'Original'
+
+
+def test_post_description_is_escaped_in_update_form(admin_client, services):
+    services.user_manager.create_post(
+        'Safe post', '<script>alert(1)</script>', 'safe.jpg', active=True)
+
+    response = admin_client.get('/admin/posts')
+
+    assert b'<script>alert(1)</script>' not in response.data
+    assert b'&lt;script&gt;alert(1)&lt;/script&gt;' in response.data
+
+
 def test_admin_chooses_initial_visibility_for_each_post(
         admin_client, csrf_token, services, monkeypatch):
     filenames = iter(('visible.jpg', 'hidden.jpg'))

@@ -163,3 +163,23 @@ def test_post_visibility_is_independent_per_post(user_manager):
 
 def test_setting_visibility_for_missing_post_fails(user_manager):
     assert user_manager.set_post_active(999_999, False) is False
+
+
+def test_update_post_description_changes_only_selected_post(user_manager):
+    user_manager.create_post('First', 'Old first', 'first.jpg')
+    user_manager.create_post('Second', 'Old second', 'second.jpg')
+    posts = {post['title']: post for post in user_manager.get_posts()}
+
+    assert user_manager.update_post_description(
+        posts['First']['id'], 'Updated first') is True
+
+    updated = {post['title']: post for post in user_manager.get_posts()}
+    assert updated['First']['description'] == 'Updated first'
+    assert updated['First']['image_file'] == 'first.jpg'
+    assert updated['First']['active'] == 1
+    assert updated['Second']['description'] == 'Old second'
+    assert user_manager.update_post_description(
+        posts['First']['id'], '') is True
+    cleared = {post['title']: post for post in user_manager.get_posts()}
+    assert cleared['First']['description'] == ''
+    assert user_manager.update_post_description(999_999, 'Missing') is False
