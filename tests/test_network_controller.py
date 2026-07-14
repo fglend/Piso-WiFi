@@ -3,9 +3,10 @@ from unittest.mock import mock_open, patch
 
 import pytest
 
-from network.ap_manager import is_valid_mac
+from network.ap_manager import APManager, is_valid_mac
 from network.firewall import Firewall
 from network.qos import QoSManager
+from network.wired import WiredGateway
 from network_controller import NetworkController
 from tests.conftest import MAC
 
@@ -25,6 +26,37 @@ def test_is_valid_mac():
     assert not is_valid_mac("00:11:22:33:44")
     assert not is_valid_mac("00:11:22:33:44:55; rm -rf /")
     assert not is_valid_mac("")
+
+
+def test_wired_dns_config_maps_portal_hostname(settings, tmp_path):
+    settings.portal_hostname = 'glend-pisowifi'
+    gateway = WiredGateway(settings)
+    gateway.dnsmasq_conf = str(tmp_path / 'dnsmasq.conf')
+
+    gateway.write_configs()
+
+    config = (tmp_path / 'dnsmasq.conf').read_text()
+    assert 'host-record=glend-pisowifi,192.168.4.1' in config
+
+
+def test_hostapd_dns_config_maps_portal_hostname(settings, tmp_path):
+    settings.portal_hostname = 'glend-pisowifi'
+    manager = APManager(settings)
+    manager.hostapd_conf = str(tmp_path / 'hostapd.conf')
+    manager.dnsmasq_conf = str(tmp_path / 'dnsmasq.conf')
+
+    with patch('network.ap_manager.os.makedirs'):
+        manager.write_configs()
+
+    config = (tmp_path / 'dnsmasq.conf').read_text()
+    assert 'host-record=glend-pisowifi,192.168.4.1' in config
+
+
+def test_portal_hostname_rejects_dnsmasq_config_injection(settings):
+    settings.portal_hostname = 'glend-pisowifi\nserver=attacker.example'
+
+    with pytest.raises(RuntimeError, match='PORTAL_HOSTNAME'):
+        settings.validate()
 
 
 def test_block_mac(network_controller):

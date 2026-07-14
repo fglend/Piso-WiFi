@@ -74,7 +74,8 @@ def index():
 def captive_redirect(requested_path):
     """Send HTTP connectivity probes and unknown paths to the portal root."""
     settings = _services().settings
-    return redirect(f'http://{settings.ap_ip}:{settings.port}/')
+    return redirect(
+        f'http://{settings.portal_hostname}:{settings.port}/')
 
 
 @portal_bp.route('/login', methods=['GET', 'POST'])

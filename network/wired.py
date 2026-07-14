@@ -45,6 +45,7 @@ dhcp-option=option:netmask,{s.network_mask}
 # DNS configuration
 no-resolv
 no-poll
+host-record={s.portal_hostname},{self.ip}
 server=8.8.8.8
 server=8.8.4.4
 

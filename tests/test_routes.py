@@ -113,7 +113,7 @@ def test_captive_probe_redirects_to_canonical_portal(client, services):
 
     assert response.status_code == 302
     assert response.location == (
-        f'http://{services.settings.ap_ip}:{services.settings.port}/')
+        f'http://glend-pisowifi:{services.settings.port}/')
 
 
 def test_captive_redirect_never_uses_untrusted_host(client, services):
@@ -122,7 +122,7 @@ def test_captive_redirect_never_uses_untrusted_host(client, services):
 
     assert response.status_code == 302
     assert response.location == (
-        f'http://{services.settings.ap_ip}:{services.settings.port}/')
+        f'http://glend-pisowifi:{services.settings.port}/')
     assert 'attacker.example' not in response.location
 
 

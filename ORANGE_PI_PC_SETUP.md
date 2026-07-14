@@ -432,6 +432,7 @@ FLASK_ENV=production
 FLASK_HOST=0.0.0.0
 FLASK_PORT=5000
 SECRET_KEY=PASTE_RANDOM_SECRET_HERE
+PORTAL_HOSTNAME=glend-pisowifi
 
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD_HASH=PASTE_WERKZEUG_HASH_HERE
@@ -565,11 +566,12 @@ On a phone connected to the external AP:
 
 1. Confirm it receives `192.168.4.20-254`.
 2. Confirm gateway and DNS are both `192.168.4.1`.
-3. Open `http://neverssl.com`. An unpaid device should be redirected to
-   `http://192.168.4.1:5000/`; common Android, Apple, and Windows HTTP
+3. Open `http://glend-pisowifi:5000/`. An unpaid device should reach the
+   portal at that local name; common Android, Apple, and Windows HTTP
    connectivity probes should also open the captive portal automatically.
    HTTPS is intentionally not intercepted because doing so causes TLS
-   certificate errors. If needed, open the HTTP URL above explicitly.
+   certificate errors. A device using manual external DNS may not resolve the
+   local name while unpaid; use `http://192.168.4.1:5000/` as the recovery URL.
 4. Do **not** sign in as admin from the customer phone. Use the trusted SSH
    tunnel from Section 11, then open `http://127.0.0.1:5000/login` locally.
    Customer-LAN requests to `/login` and `/admin` are rejected, and the

@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 _INSECURE_DEFAULTS = {'your-secret-key-here', 'admin123', 'pisowifi123'}
 _MAC_ADDRESS_RE = re.compile(r'^(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$')
+_HOSTNAME_RE = re.compile(r'^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$')
 
 
 def _env_int(name, default):
@@ -58,6 +59,9 @@ class Settings:
     portal_title: str = field(default_factory=lambda: os.getenv('PORTAL_TITLE', 'PISO WIFI Portal'))
     portal_subtitle: str = field(default_factory=lambda: os.getenv(
         'PORTAL_SUBTITLE', 'Only one phone can use the coin slot at a time.'))
+    portal_hostname: str = field(
+        default_factory=lambda: os.getenv(
+            'PORTAL_HOSTNAME', 'glend-pisowifi').strip().lower())
     dashboard_refresh_seconds: int = field(
         default_factory=lambda: _env_int('DASHBOARD_REFRESH_SECONDS', 10))
     default_download_kbps: int = field(default_factory=lambda: _env_int('DEFAULT_DOWNLOAD_KBPS', 2048))
@@ -121,6 +125,10 @@ class Settings:
 
     def validate(self):
         """Refuse to run in production with known-default credentials."""
+        if not _HOSTNAME_RE.fullmatch(self.portal_hostname):
+            raise RuntimeError(
+                'Invalid configuration: PORTAL_HOSTNAME must be a single '
+                'DNS label using only letters, numbers, and hyphens')
         poe_ap_mac = self.poe_ap_mac_address.strip()
         poe_ap_ip = self.poe_ap_ip_address.strip()
         if poe_ap_mac and not _MAC_ADDRESS_RE.fullmatch(poe_ap_mac):
