@@ -80,7 +80,7 @@ def test_firewall_redirects_unpaid_http_clients_to_portal():
     ] in commands
     assert [
         'iptables', '-t', 'nat', '-A', 'PISOWIFI_PORTAL',
-        '-j', 'REDIRECT', '--to-ports', '5000',
+        '-p', 'tcp', '-j', 'REDIRECT', '--to-ports', '5000',
     ] in commands
     assert ['iptables', '-A', 'PISOWIFI_INPUT', '-j', 'DROP'] in commands
     assert not any(

@@ -169,7 +169,8 @@ class Firewall:
         for mac in allowed_macs:
             self._insert_captive_return(mac)
         run_cmd(['iptables', '-t', 'nat', '-A', CAPTIVE_CHAIN,
-                 '-j', 'REDIRECT', '--to-ports', str(self.portal_port)])
+                 '-p', 'tcp', '-j', 'REDIRECT',
+                 '--to-ports', str(self.portal_port)])
 
     def _insert_protected_accept(self, mac_address, ip_address, append=False):
         operation = '-A' if append else '-I'
