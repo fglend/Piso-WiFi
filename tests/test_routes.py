@@ -107,6 +107,37 @@ def test_portal_displays_network_speed_in_mbps(client):
     assert b'kbps down' not in resp.data
 
 
+def test_captive_probe_redirects_to_canonical_portal(client, services):
+    response = client.get(
+        '/generate_204', headers={'Host': 'connectivitycheck.gstatic.com'})
+
+    assert response.status_code == 302
+    assert response.location == (
+        f'http://{services.settings.ap_ip}:{services.settings.port}/')
+
+
+def test_captive_redirect_never_uses_untrusted_host(client, services):
+    response = client.get(
+        '/arbitrary/path', headers={'Host': 'attacker.example'})
+
+    assert response.status_code == 302
+    assert response.location == (
+        f'http://{services.settings.ap_ip}:{services.settings.port}/')
+    assert 'attacker.example' not in response.location
+
+
+def test_customer_lan_cannot_open_admin_login(client):
+    response = client.get('/login', environ_base={'REMOTE_ADDR': '192.168.4.20'})
+
+    assert response.status_code == 403
+
+
+def test_unknown_post_is_not_redirected(client):
+    response = client.post('/arbitrary/path')
+
+    assert not 300 <= response.status_code < 400
+
+
 def test_redeem_voucher_via_portal(client, csrf_token, services):
     code = services.user_manager.create_voucher(15)
     resp = post(client, '/redeem', csrf_token, code=code)

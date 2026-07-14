@@ -44,6 +44,7 @@ def mock_network(settings):
     nc.resolve_mac.return_value = MAC
     nc.block_mac.return_value = True
     nc.unblock_mac.return_value = True
+    nc.is_access_allowed.return_value = True
     nc.set_bandwidth_limit.return_value = True
     nc.remove_bandwidth_limit.return_value = True
     return nc

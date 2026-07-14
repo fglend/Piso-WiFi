@@ -1,3 +1,4 @@
+from threading import Event, Thread
 from unittest.mock import mock_open, patch
 
 import pytest
@@ -39,9 +40,9 @@ def test_block_mac(network_controller):
 def test_unblock_mac(network_controller):
     with patch('network.firewall.run_cmd') as mock_run:
         assert network_controller.unblock_mac(MAC) is True
-        args = mock_run.call_args_list[-1][0][0]
-        assert 'ACCEPT' in args
-    assert MAC in args
+    commands = [call.args[0] for call in mock_run.call_args_list]
+    assert any(MAC in command and 'ACCEPT' in command for command in commands)
+    assert any(MAC in command and 'RETURN' in command for command in commands)
 
 
 def test_firewall_allows_established_return_traffic_from_uplink():
@@ -61,6 +62,76 @@ def test_firewall_allows_established_return_traffic_from_uplink():
         'iptables', '-I', 'INPUT', '1',
         '-i', 'eth1', '-p', 'tcp', '--dport', '5000', '-j', 'DROP',
     ] in commands
+
+
+def test_firewall_redirects_unpaid_http_clients_to_portal():
+    firewall = Firewall('eth0', 'eth1', '192.168.4.1')
+
+    with patch('network.firewall.open', mock_open()), \
+            patch('network.firewall.run_cmd') as run_cmd:
+        firewall.setup()
+
+    commands = [call.args[0] for call in run_cmd.call_args_list]
+    assert ['iptables', '-t', 'nat', '-N', 'PISOWIFI_PORTAL'] in commands
+    assert [
+        'iptables', '-t', 'nat', '-I', 'PREROUTING', '1',
+        '-i', 'eth0', '-p', 'tcp', '--dport', '80',
+        '-j', 'PISOWIFI_PORTAL',
+    ] in commands
+    assert [
+        'iptables', '-t', 'nat', '-A', 'PISOWIFI_PORTAL',
+        '-j', 'REDIRECT', '--to-ports', '5000',
+    ] in commands
+    assert ['iptables', '-A', 'PISOWIFI_INPUT', '-j', 'DROP'] in commands
+    assert not any(
+        all(value in command for value in ('PISOWIFI', '--dport', '53'))
+        for command in commands
+        if 'PISOWIFI_INPUT' not in command)
+
+
+def test_allowed_client_bypasses_captive_portal_redirect():
+    firewall = Firewall('eth0', 'eth1', '192.168.4.1')
+
+    with patch('network.firewall.run_cmd') as run_cmd:
+        assert firewall.allow_mac(MAC) is True
+
+    commands = [call.args[0] for call in run_cmd.call_args_list]
+    assert [
+        'iptables', '-t', 'nat', '-I', 'PISOWIFI_PORTAL', '1',
+        '-m', 'mac', '--mac-source', MAC, '-j', 'RETURN',
+    ] in commands
+    assert any(
+        all(value in command for value in (MAC, '-o', 'eth1', 'ACCEPT'))
+        for command in commands)
+
+
+def test_blocked_client_loses_captive_portal_bypass():
+    firewall = Firewall('eth0', 'eth1', '192.168.4.1')
+
+    with patch('network.firewall.run_cmd') as run_cmd:
+        assert firewall.block_mac(MAC) is True
+
+    commands = [call.args[0] for call in run_cmd.call_args_list]
+    assert [
+        'iptables', '-t', 'nat', '-D', 'PISOWIFI_PORTAL',
+        '-m', 'mac', '--mac-source', MAC, '-j', 'RETURN',
+    ] in commands
+    assert any(MAC in command and 'DROP' in command for command in commands)
+
+
+def test_captive_redirect_does_not_intercept_https():
+    firewall = Firewall('eth0', 'eth1', '192.168.4.1')
+
+    with patch('network.firewall.open', mock_open()), \
+            patch('network.firewall.run_cmd') as run_cmd:
+        firewall.setup()
+
+    commands = [call.args[0] for call in run_cmd.call_args_list]
+    redirect_commands = [
+        command for command in commands if 'REDIRECT' in command
+    ]
+    assert redirect_commands
+    assert not any('443' in command for command in commands)
 
 
 def test_block_rejects_invalid_mac(network_controller):
@@ -135,6 +206,52 @@ def test_poe_ap_is_not_treated_as_a_customer_device(settings):
 
     assert [device['mac_address'] for device in devices] == [MAC]
     assert seen == [MAC]
+
+
+def test_access_state_and_firewall_transition_are_serialized(network_controller):
+    allow_entered = Event()
+    release_allow = Event()
+    block_attempted = Event()
+    block_entered = Event()
+
+    def delayed_allow(_mac):
+        allow_entered.set()
+        assert release_allow.wait(timeout=1)
+        return True
+
+    def tracked_block(_mac):
+        block_entered.set()
+        return True
+
+    def request_block():
+        block_attempted.set()
+        network_controller.block_mac(MAC)
+
+    with patch.object(network_controller.firewall, 'allow_mac', delayed_allow), \
+            patch.object(network_controller.firewall, 'block_mac', tracked_block):
+        allow_thread = Thread(target=network_controller.unblock_mac, args=(MAC,))
+        block_thread = Thread(target=request_block)
+        allow_thread.start()
+        assert allow_entered.wait(timeout=1)
+        block_thread.start()
+        assert block_attempted.wait(timeout=1)
+        assert not block_entered.wait(timeout=0.05)
+        release_allow.set()
+        allow_thread.join(timeout=1)
+        block_thread.join(timeout=1)
+
+    assert block_entered.is_set()
+    assert not network_controller.is_access_allowed(MAC)
+
+
+def test_failed_unblock_marks_access_for_retry(network_controller):
+    network_controller.allowed_macs = frozenset({MAC})
+
+    with patch.object(
+            network_controller.firewall, 'allow_mac', return_value=False):
+        assert network_controller.unblock_mac(MAC) is False
+
+    assert not network_controller.is_access_allowed(MAC)
 
 
 def test_poe_ap_cannot_be_blocked(settings):
@@ -232,4 +349,7 @@ def test_firewall_sync_keeps_protected_poe_ap_allowed():
     commands = [call.args[0] for call in run_cmd.call_args_list]
     assert any(all(value in command for value in
                    (POE_AP_MAC, POE_AP_IP, 'ACCEPT'))
+               for command in commands)
+    assert any(all(value in command for value in
+                   (POE_AP_MAC, POE_AP_IP, 'RETURN'))
                for command in commands)

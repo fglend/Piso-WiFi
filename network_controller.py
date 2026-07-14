@@ -6,6 +6,7 @@ network/qos.py.
 """
 import logging
 from ipaddress import IPv4Address, AddressValueError
+from threading import RLock
 
 from network.ap_manager import APManager, is_valid_mac
 from network.firewall import Firewall
@@ -54,7 +55,8 @@ class NetworkController:
         backend = WiredGateway if settings.network_mode == 'wired' else APManager
         self.ap = backend(settings)
         self.firewall = Firewall(settings.ap_interface, settings.internet_interface,
-                                 settings.ap_ip, protected_devices)
+                                 settings.ap_ip, protected_devices,
+                                 portal_port=settings.port)
         self.qos = QoSManager(settings.ap_interface,
                               self.DEFAULT_DOWNLOAD_SPEED, self.DEFAULT_UPLOAD_SPEED)
 
@@ -63,6 +65,8 @@ class NetworkController:
         self.on_new_device = self.block_mac
 
         self.connected_devices = set()
+        self._access_lock = RLock()
+        self.allowed_macs = frozenset()
 
         if manage_hardware:
             self._bring_up()
@@ -132,13 +136,29 @@ class NetworkController:
         if normalized_mac in self.trusted_macs:
             self.logger.warning(
                 "Prevented firewall block of trusted PoE AP %s", normalized_mac)
-        return self.firewall.block_mac(normalized_mac)
+        with self._access_lock:
+            succeeded = self.firewall.block_mac(normalized_mac)
+            # A failed multi-command transition leaves kernel state unknown;
+            # mark it denied so a future positive-balance pass repairs it.
+            self.allowed_macs = self.allowed_macs - {normalized_mac}
+        return succeeded
 
     def unblock_mac(self, mac_address):
         if not is_valid_mac(mac_address):
             self.logger.error(f"Refusing to unblock invalid MAC: {mac_address!r}")
             return False
-        return self.firewall.allow_mac(mac_address)
+        normalized_mac = mac_address.upper()
+        with self._access_lock:
+            succeeded = self.firewall.allow_mac(normalized_mac)
+            if succeeded:
+                self.allowed_macs = self.allowed_macs | {normalized_mac}
+            else:
+                self.allowed_macs = self.allowed_macs - {normalized_mac}
+        return succeeded
+
+    def is_access_allowed(self, mac_address):
+        with self._access_lock:
+            return mac_address.upper() in self.allowed_macs
 
     # --- bandwidth ----------------------------------------------------------
 
@@ -171,7 +191,12 @@ class NetworkController:
         ]
         allowed_macs = list(dict.fromkeys(
             u['mac_address'].upper() for u in users))
-        self.firewall.sync(allowed_macs)
+        with self._access_lock:
+            synced = self.firewall.sync(allowed_macs)
+            if synced:
+                self.allowed_macs = frozenset(allowed_macs)
+            else:
+                self.allowed_macs = frozenset()
         for user in users:
             ip = self.ap.resolve_ip(user['mac_address'])
             if ip:

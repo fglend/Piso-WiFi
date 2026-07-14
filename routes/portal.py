@@ -3,10 +3,10 @@ upgrades. The device is always identified by the requesting IP - clients can
 never act on another device's MAC."""
 import logging
 
-from flask import (Blueprint, current_app, flash, jsonify, redirect,
+from flask import (Blueprint, abort, current_app, flash, jsonify, redirect,
                    render_template, request, session, url_for)
 
-from auth import verify_admin
+from auth import request_is_loopback, verify_admin
 from pricing import format_duration
 
 portal_bp = Blueprint('portal', __name__)
@@ -70,8 +70,17 @@ def index():
     )
 
 
+@portal_bp.route('/<path:requested_path>', methods=['GET', 'HEAD'])
+def captive_redirect(requested_path):
+    """Send HTTP connectivity probes and unknown paths to the portal root."""
+    settings = _services().settings
+    return redirect(f'http://{settings.ap_ip}:{settings.port}/')
+
+
 @portal_bp.route('/login', methods=['GET', 'POST'])
 def login():
+    if not request_is_loopback():
+        abort(403)
     if request.method == 'POST':
         settings = _services().settings
         if verify_admin(settings, request.form.get('username'),

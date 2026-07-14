@@ -6,15 +6,21 @@ from pathlib import Path
 import re
 import secrets
 
-from flask import (Blueprint, current_app, flash, jsonify, redirect,
+from flask import (Blueprint, abort, current_app, flash, jsonify, redirect,
                    render_template, request, url_for)
 
-from auth import admin_required
+from auth import admin_required, request_is_loopback
 from network.ap_manager import is_valid_mac
 from pricing import compute_minutes, format_duration
 
 admin_bp = Blueprint('admin', __name__)
 logger = logging.getLogger(__name__)
+
+
+@admin_bp.before_request
+def require_local_admin_connection():
+    if not request_is_loopback():
+        abort(403)
 
 
 def _services():

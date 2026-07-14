@@ -43,6 +43,18 @@ def test_no_charge_under_a_minute(user_manager, mock_network, settings):
     assert user_manager.get_last_deduction(MAC) == 1000.0
 
 
+def test_positive_balance_self_heals_stale_firewall_block(
+        user_manager, mock_network, settings):
+    tm = make_tm(user_manager, mock_network, settings)
+    user_manager.add_time(MAC, 5, 25)
+    mock_network.is_access_allowed.return_value = False
+
+    tm._process_device(MAC, now=1000.0)
+
+    mock_network.unblock_mac.assert_called_once_with(MAC)
+    mock_network.set_bandwidth_limit.assert_called_once()
+
+
 def test_blocks_on_depletion(user_manager, mock_network, settings):
     tm = make_tm(user_manager, mock_network, settings)
     user_manager.add_time(MAC, 1, 1)

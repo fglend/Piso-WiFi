@@ -549,8 +549,10 @@ systemctl is-active pisowifi dnsmasq
 ss -lntup | grep ':5000'
 cat /proc/sys/net/ipv4/ip_forward
 sudo iptables -S PISOWIFI
+sudo iptables -S PISOWIFI_INPUT
 sudo iptables -S INPUT
 sudo iptables -t nat -S POSTROUTING
+sudo iptables -t nat -S PISOWIFI_PORTAL
 sudo iptables -S FORWARD
 sudo tc qdisc show dev eth0
 sudo cat /var/lib/misc/dnsmasq.leases
@@ -563,11 +565,15 @@ On a phone connected to the external AP:
 
 1. Confirm it receives `192.168.4.20-254`.
 2. Confirm gateway and DNS are both `192.168.4.1`.
-3. Open `http://192.168.4.1:5000` explicitly. The current implementation
-   does not add an HTTP redirect/DNAT rule, so do not rely on an automatic
-   captive-portal popup.
+3. Open `http://neverssl.com`. An unpaid device should be redirected to
+   `http://192.168.4.1:5000/`; common Android, Apple, and Windows HTTP
+   connectivity probes should also open the captive portal automatically.
+   HTTPS is intentionally not intercepted because doing so causes TLS
+   certificate errors. If needed, open the HTTP URL above explicitly.
 4. Do **not** sign in as admin from the customer phone. Use the trusted SSH
    tunnel from Section 11, then open `http://127.0.0.1:5000/login` locally.
+   Customer-LAN requests to `/login` and `/admin` are rejected, and the
+   `PISOWIFI_INPUT` chain blocks access to SSH and other Orange Pi services.
 5. Confirm `iptables -S INPUT` drops TCP port 5000 arriving from
    `INTERNET_INTERFACE` while the portal remains reachable from the client LAN.
 6. Confirm different clients appear with different MAC addresses.

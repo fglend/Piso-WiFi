@@ -95,6 +95,14 @@ class TimeManager:
             self.user_manager.clear_session(mac)
             return
 
+        # A concurrent top-up can race with a stale zero-balance block. Track
+        # the applied firewall state and self-heal it on the next meter pass.
+        if not self.network_controller.is_access_allowed(mac):
+            info = self.user_manager.get_device_info(mac)
+            if self.network_controller.unblock_mac(mac) and info:
+                self.network_controller.set_bandwidth_limit(
+                    mac, info['download_limit'], info['upload_limit'])
+
         last = self.user_manager.get_last_deduction(mac)
         if last is None:
             # Clock starts now; the first minute is charged a minute from now

@@ -1,9 +1,18 @@
 import hmac
 import secrets
 from functools import wraps
+from ipaddress import ip_address
 
 from flask import flash, redirect, request, session, url_for, abort
 from werkzeug.security import check_password_hash
+
+
+def request_is_loopback():
+    """Administration is available only through the local/SSH-tunnel path."""
+    try:
+        return ip_address(request.remote_addr).is_loopback
+    except ValueError:
+        return False
 
 
 def verify_admin(settings, username, password):
