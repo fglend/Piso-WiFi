@@ -399,6 +399,21 @@ Use the AP vendor interface to set:
 Use a client DHCP range starting at `.20` so the AP management address cannot
 conflict with a customer device.
 
+From the Orange Pi, contact the AP management address and read the MAC learned
+on the LAN interface:
+
+```bash
+ping -c 1 192.168.4.2
+ip neigh show dev eth0 to 192.168.4.2
+```
+
+Verify that MAC against the AP vendor interface or label. Use the management /
+bridge MAC shown by `ip neigh`, not a customer's MAC or an unrelated radio
+BSSID. Record it for `POE_AP_MAC_ADDRESS` below. Keep client isolation and any
+available MAC-spoof protection enabled on the AP. The firewall pairs the MAC
+with the reserved management IP, but a client capable of spoofing both remains
+a residual risk; a dedicated management VLAN is stronger isolation.
+
 ## 10. Create the production environment file
 
 ```bash
@@ -427,6 +442,8 @@ MANAGE_HARDWARE=true
 NETWORK_MODE=wired
 LAN_INTERFACE=eth0
 INTERNET_INTERFACE=enx001122334455
+POE_AP_MAC_ADDRESS=AA:BB:CC:DD:EE:FF
+POE_AP_IP_ADDRESS=192.168.4.2
 
 AP_IP=192.168.4.1
 DHCP_RANGE_START=192.168.4.20
@@ -768,6 +785,27 @@ sudo systemctl status pisowifi --no-pager
 
 After an Armbian kernel update, recheck sysfs GPIO and repeat the relay OFF
 test before accepting coins.
+
+### Reset the application database
+
+Resetting the database permanently clears users, balances, transactions,
+vouchers, sessions, custom rates, settings, and carousel post records. It does
+not change `.env` or delete uploaded image files. Stop the service and move the
+old database to a timestamped backup instead of deleting it:
+
+```bash
+sudo systemctl stop pisowifi
+cd /opt/piso_wifi
+sudo mv config/piso_wifi.db "config/piso_wifi.db.reset-$(date +%F-%H%M%S).bak"
+sudo systemctl start pisowifi
+sudo systemctl status pisowifi --no-pager
+sudo sqlite3 config/piso_wifi.db '.tables'
+```
+
+The service creates a clean database, schema, default plans, and default rates
+automatically. Keep the backup until the reset has been verified. To undo the
+reset, stop the service, move the new database aside, restore the backup to
+`config/piso_wifi.db`, set mode `600`, and start the service again.
 
 ## References
 

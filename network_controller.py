@@ -5,6 +5,7 @@ actual work lives in network/ap_manager.py, network/firewall.py and
 network/qos.py.
 """
 import logging
+from ipaddress import IPv4Address, AddressValueError
 
 from network.ap_manager import APManager, is_valid_mac
 from network.firewall import Firewall
@@ -26,11 +27,34 @@ class NetworkController:
         self.settings = settings
         self.ap_interface = settings.ap_interface
         self.internet_interface = settings.internet_interface
+        configured_ap_mac = getattr(
+            settings, 'poe_ap_mac_address', '').strip().upper()
+        configured_ap_ip = getattr(settings, 'poe_ap_ip_address', '').strip()
+        if settings.network_mode != 'wired':
+            configured_ap_mac = ''
+            configured_ap_ip = ''
+        if configured_ap_mac and not is_valid_mac(configured_ap_mac):
+            self.logger.error(
+                "Ignoring invalid POE_AP_MAC_ADDRESS: %r", configured_ap_mac)
+            configured_ap_mac = ''
+        try:
+            if configured_ap_ip:
+                configured_ap_ip = str(IPv4Address(configured_ap_ip))
+        except AddressValueError:
+            self.logger.error(
+                "Ignoring invalid POE_AP_IP_ADDRESS: %r", configured_ap_ip)
+            configured_ap_ip = ''
+        if not configured_ap_mac or not configured_ap_ip:
+            configured_ap_mac = ''
+            configured_ap_ip = ''
+        protected_devices = (
+            {configured_ap_mac: configured_ap_ip} if configured_ap_mac else {})
+        self.trusted_macs = frozenset(protected_devices)
 
         backend = WiredGateway if settings.network_mode == 'wired' else APManager
         self.ap = backend(settings)
         self.firewall = Firewall(settings.ap_interface, settings.internet_interface,
-                                 settings.ap_ip)
+                                 settings.ap_ip, protected_devices)
         self.qos = QoSManager(settings.ap_interface,
                               self.DEFAULT_DOWNLOAD_SPEED, self.DEFAULT_UPLOAD_SPEED)
 
@@ -62,7 +86,16 @@ class NetworkController:
 
     def get_connected_devices(self):
         try:
-            devices = self.ap.get_stations()
+            # Work with copies so station data owned by a backend is never
+            # mutated. MACs are canonicalized for case-insensitive matching.
+            devices = [
+                {**device, 'mac_address': str(device['mac_address']).upper()}
+                for device in self.ap.get_stations()
+            ]
+            devices = [
+                device for device in devices
+                if device['mac_address'] not in self.trusted_macs
+            ]
 
             current_macs = {d['mac_address'] for d in devices}
             new_devices = current_macs - self.connected_devices
@@ -95,7 +128,11 @@ class NetworkController:
         if not is_valid_mac(mac_address):
             self.logger.error(f"Refusing to block invalid MAC: {mac_address!r}")
             return False
-        return self.firewall.block_mac(mac_address)
+        normalized_mac = mac_address.upper()
+        if normalized_mac in self.trusted_macs:
+            self.logger.warning(
+                "Prevented firewall block of trusted PoE AP %s", normalized_mac)
+        return self.firewall.block_mac(normalized_mac)
 
     def unblock_mac(self, mac_address):
         if not is_valid_mac(mac_address):
@@ -128,8 +165,13 @@ class NetworkController:
         active_users: iterable of dicts with mac_address, download_limit,
         upload_limit for users that still have balance.
         """
-        users = list(active_users)
-        self.firewall.sync([u['mac_address'] for u in users])
+        users = [
+            user for user in active_users
+            if user['mac_address'].upper() not in self.trusted_macs
+        ]
+        allowed_macs = list(dict.fromkeys(
+            u['mac_address'].upper() for u in users))
+        self.firewall.sync(allowed_macs)
         for user in users:
             ip = self.ap.resolve_ip(user['mac_address'])
             if ip:

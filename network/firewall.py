@@ -17,10 +17,16 @@ logger = logging.getLogger(__name__)
 
 
 class Firewall:
-    def __init__(self, ap_interface, internet_interface, ap_ip):
+    def __init__(self, ap_interface, internet_interface, ap_ip,
+                 protected_devices=None):
         self.ap_interface = ap_interface
         self.internet_interface = internet_interface
         self.ap_ip = ap_ip
+        self.protected_devices = {
+            mac.strip().upper(): ip.strip()
+            for mac, ip in (protected_devices or {}).items()
+        }
+        self.protected_macs = frozenset(self.protected_devices)
         self.logger = logger
 
     def setup(self):
@@ -72,6 +78,10 @@ class Firewall:
         self.logger.info(f"Firewall chain {CHAIN} initialized")
 
     def _add_static_rules(self):
+        # Infrastructure devices must remain reachable even when there are no
+        # paying clients. These rules are rebuilt by both setup() and sync().
+        for mac, ip in sorted(self.protected_devices.items()):
+            self._insert_protected_accept(mac, ip, append=True)
         # DNS and DHCP for everyone (needed to join the network and see the portal)
         run_cmd(['iptables', '-A', CHAIN, '-p', 'udp', '--dport', '53', '-j', 'ACCEPT'])
         run_cmd(['iptables', '-A', CHAIN, '-p', 'tcp', '--dport', '53', '-j', 'ACCEPT'])
@@ -88,23 +98,43 @@ class Firewall:
         run_cmd(['iptables', '-D', CHAIN, '-m', 'mac', '--mac-source', mac_address,
                  '-j', 'DROP'], ignore_errors=True)
 
+    def _insert_protected_accept(self, mac_address, ip_address, append=False):
+        operation = '-A' if append else '-I'
+        position = [] if append else ['1']
+        run_cmd(['iptables', operation, CHAIN, *position,
+                 '-s', ip_address, '-m', 'mac', '--mac-source', mac_address,
+                 '-j', 'ACCEPT'])
+
     def allow_mac(self, mac_address):
+        normalized_mac = mac_address.strip().upper()
         try:
-            self._delete_mac_rules(mac_address)
+            self._delete_mac_rules(normalized_mac)
+            protected_ip = self.protected_devices.get(normalized_mac)
+            if protected_ip:
+                self._insert_protected_accept(normalized_mac, protected_ip)
+                self.logger.info(
+                    "Allowed protected MAC/IP %s/%s",
+                    normalized_mac, protected_ip)
+                return True
             run_cmd(['iptables', '-I', CHAIN, '1', '-m', 'mac',
-                     '--mac-source', mac_address, '-j', 'ACCEPT'])
-            self.logger.info(f"Allowed MAC {mac_address}")
+                     '--mac-source', normalized_mac, '-j', 'ACCEPT'])
+            self.logger.info(f"Allowed MAC {normalized_mac}")
             return True
         except Exception as e:
             self.logger.error(f"Error allowing MAC {mac_address}: {e}")
             return False
 
     def block_mac(self, mac_address):
+        normalized_mac = mac_address.strip().upper()
+        if normalized_mac in self.protected_macs:
+            self.logger.warning(
+                "Prevented firewall block of protected MAC %s", normalized_mac)
+            return self.allow_mac(normalized_mac)
         try:
-            self._delete_mac_rules(mac_address)
+            self._delete_mac_rules(normalized_mac)
             run_cmd(['iptables', '-I', CHAIN, '1', '-m', 'mac',
-                     '--mac-source', mac_address, '-j', 'DROP'])
-            self.logger.info(f"Blocked MAC {mac_address}")
+                     '--mac-source', normalized_mac, '-j', 'DROP'])
+            self.logger.info(f"Blocked MAC {normalized_mac}")
             return True
         except Exception as e:
             self.logger.error(f"Error blocking MAC {mac_address}: {e}")

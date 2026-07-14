@@ -8,6 +8,9 @@ from network.qos import QoSManager
 from network_controller import NetworkController
 from tests.conftest import MAC
 
+POE_AP_MAC = "AA:BB:CC:DD:EE:01"
+POE_AP_IP = "192.168.4.2"
+
 
 @pytest.fixture
 def network_controller(settings):
@@ -111,3 +114,122 @@ def test_new_device_triggers_policy_callback(network_controller):
                                      'hostname': 'phone', 'connected': True}]):
         network_controller.get_connected_devices()
     assert seen == [MAC]
+
+
+def test_poe_ap_is_not_treated_as_a_customer_device(settings):
+    settings.network_mode = 'wired'
+    settings.poe_ap_mac_address = POE_AP_MAC.lower()
+    settings.poe_ap_ip_address = POE_AP_IP
+    controller = NetworkController(settings, manage_hardware=False)
+    seen = []
+    controller.on_new_device = seen.append
+
+    stations = [
+        {'mac_address': POE_AP_MAC, 'ip': '192.168.4.2',
+         'hostname': 'poe-ap', 'connected': True},
+        {'mac_address': MAC, 'ip': '192.168.4.3',
+         'hostname': 'phone', 'connected': True},
+    ]
+    with patch.object(controller.ap, 'get_stations', return_value=stations):
+        devices = controller.get_connected_devices()
+
+    assert [device['mac_address'] for device in devices] == [MAC]
+    assert seen == [MAC]
+
+
+def test_poe_ap_cannot_be_blocked(settings):
+    settings.network_mode = 'wired'
+    settings.poe_ap_mac_address = POE_AP_MAC
+    settings.poe_ap_ip_address = POE_AP_IP
+    controller = NetworkController(settings, manage_hardware=False)
+
+    with patch.object(
+            controller.firewall, 'block_mac', return_value=True) as block_mac:
+        assert controller.block_mac(POE_AP_MAC.lower()) is True
+
+    block_mac.assert_called_once_with(POE_AP_MAC)
+
+
+def test_reconcile_does_not_treat_poe_ap_as_a_paying_user(settings):
+    settings.network_mode = 'wired'
+    settings.poe_ap_mac_address = POE_AP_MAC
+    settings.poe_ap_ip_address = POE_AP_IP
+    controller = NetworkController(settings, manage_hardware=False)
+    active_users = [{
+        'mac_address': POE_AP_MAC,
+        'download_limit': 2048,
+        'upload_limit': 1024,
+    }]
+
+    with patch.object(controller.firewall, 'sync') as sync, \
+            patch.object(controller.ap, 'resolve_ip') as resolve_ip, \
+            patch.object(controller.qos, 'set_limit') as set_limit:
+        controller.reconcile(active_users)
+
+    sync.assert_called_once_with([])
+    resolve_ip.assert_not_called()
+    set_limit.assert_not_called()
+
+
+def test_poe_ap_exemption_is_disabled_in_hostapd_mode(settings):
+    settings.network_mode = 'ap'
+    settings.poe_ap_mac_address = POE_AP_MAC
+    controller = NetworkController(settings, manage_hardware=False)
+
+    with patch.object(
+            controller.firewall, 'block_mac', return_value=True) as block_mac:
+        assert controller.block_mac(POE_AP_MAC) is True
+
+    block_mac.assert_called_once_with(POE_AP_MAC)
+
+
+def test_invalid_poe_ap_mac_fails_configuration_validation(settings):
+    settings.poe_ap_mac_address = 'not-a-mac'
+    settings.poe_ap_ip_address = POE_AP_IP
+
+    with pytest.raises(RuntimeError, match='POE_AP_MAC_ADDRESS'):
+        settings.validate()
+
+
+def test_poe_ap_mac_requires_reserved_ip(settings):
+    settings.poe_ap_mac_address = POE_AP_MAC
+    settings.poe_ap_ip_address = ''
+
+    with pytest.raises(RuntimeError, match='POE_AP_IP_ADDRESS'):
+        settings.validate()
+
+
+def test_valid_poe_ap_mac_and_reserved_ip_pass_validation(settings):
+    settings.poe_ap_mac_address = POE_AP_MAC
+    settings.poe_ap_ip_address = POE_AP_IP
+    settings.dhcp_range_start = '192.168.4.20'
+
+    assert settings.validate() is settings
+
+
+def test_firewall_never_drops_protected_poe_ap():
+    firewall = Firewall(
+        'eth0', 'eth1', '192.168.4.1', {POE_AP_MAC: POE_AP_IP})
+
+    with patch('network.firewall.run_cmd') as run_cmd:
+        assert firewall.block_mac(POE_AP_MAC.lower()) is True
+
+    commands = [call.args[0] for call in run_cmd.call_args_list]
+    assert not any(
+        '-I' in command and 'DROP' in command for command in commands)
+    accept_commands = [command for command in commands if 'ACCEPT' in command]
+    assert any(POE_AP_MAC in command and POE_AP_IP in command
+               for command in accept_commands)
+
+
+def test_firewall_sync_keeps_protected_poe_ap_allowed():
+    firewall = Firewall(
+        'eth0', 'eth1', '192.168.4.1', {POE_AP_MAC: POE_AP_IP})
+
+    with patch('network.firewall.run_cmd') as run_cmd:
+        assert firewall.sync([]) is True
+
+    commands = [call.args[0] for call in run_cmd.call_args_list]
+    assert any(all(value in command for value in
+                   (POE_AP_MAC, POE_AP_IP, 'ACCEPT'))
+               for command in commands)

@@ -1,5 +1,7 @@
 import os
 import logging
+import re
+from ipaddress import IPv4Address, IPv4Network, AddressValueError
 from dataclasses import dataclass, field
 
 from dotenv import load_dotenv
@@ -9,6 +11,7 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 _INSECURE_DEFAULTS = {'your-secret-key-here', 'admin123', 'pisowifi123'}
+_MAC_ADDRESS_RE = re.compile(r'^(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$')
 
 
 def _env_int(name, default):
@@ -77,6 +80,13 @@ class Settings:
     ap_interface: str = field(default_factory=lambda: os.getenv(
         'LAN_INTERFACE', os.getenv('WIFI_INTERFACE', 'wlan0')))
     internet_interface: str = field(default_factory=lambda: os.getenv('INTERNET_INTERFACE', 'wlan1'))
+    # Management/bridge MAC of the external PoE access point. This device is
+    # infrastructure, not a paying portal client, and must never be blocked.
+    poe_ap_mac_address: str = field(
+        default_factory=lambda: os.getenv(
+            'POE_AP_MAC_ADDRESS', '').strip().upper())
+    poe_ap_ip_address: str = field(
+        default_factory=lambda: os.getenv('POE_AP_IP_ADDRESS', '').strip())
     ap_ssid: str = field(default_factory=lambda: os.getenv('AP_SSID', 'PisoWiFi'))
     ap_password: str = field(default_factory=lambda: os.getenv('AP_PASSWORD', 'pisowifi123'))
     ap_ip: str = field(default_factory=lambda: os.getenv('AP_IP', '192.168.4.1'))
@@ -111,6 +121,35 @@ class Settings:
 
     def validate(self):
         """Refuse to run in production with known-default credentials."""
+        poe_ap_mac = self.poe_ap_mac_address.strip()
+        poe_ap_ip = self.poe_ap_ip_address.strip()
+        if poe_ap_mac and not _MAC_ADDRESS_RE.fullmatch(poe_ap_mac):
+            raise RuntimeError(
+                'Invalid configuration: POE_AP_MAC_ADDRESS must be a '
+                'colon-separated MAC address')
+        if bool(poe_ap_mac) != bool(poe_ap_ip):
+            raise RuntimeError(
+                'Invalid configuration: POE_AP_MAC_ADDRESS and '
+                'POE_AP_IP_ADDRESS must be set together')
+        if poe_ap_ip:
+            try:
+                management_ip = IPv4Address(poe_ap_ip)
+                lan_network = IPv4Network(
+                    f'{self.ap_ip}/{self.network_mask}', strict=False)
+                dhcp_start = IPv4Address(self.dhcp_range_start)
+                dhcp_end = IPv4Address(self.dhcp_range_end)
+            except (AddressValueError, ValueError):
+                raise RuntimeError(
+                    'Invalid configuration: POE_AP_IP_ADDRESS must be a '
+                    'valid IPv4 address on the client LAN')
+            if management_ip not in lan_network or str(management_ip) == self.ap_ip:
+                raise RuntimeError(
+                    'Invalid configuration: POE_AP_IP_ADDRESS must be a '
+                    'reserved address on the client LAN, not AP_IP')
+            if dhcp_start <= management_ip <= dhcp_end:
+                raise RuntimeError(
+                    'Invalid configuration: POE_AP_IP_ADDRESS must be outside '
+                    'the DHCP range')
         problems = []
         if self.is_production:
             if self.secret_key in _INSECURE_DEFAULTS:
