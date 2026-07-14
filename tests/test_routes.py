@@ -166,6 +166,26 @@ def test_settings_page(client, admin_client):
     assert b'visible_in_portal' not in resp.data
 
 
+def test_dashboard_has_connected_and_disconnected_device_tabs(
+        admin_client, services):
+    services.user_manager.sync_connection_snapshot([{
+        'mac_address': MAC, 'hostname': 'old-phone', 'ip': '192.168.4.20'}])
+    services.user_manager.sync_connection_snapshot([])
+    services.user_manager.sync_connection_snapshot([])
+
+    response = admin_client.get('/admin')
+
+    assert response.status_code == 200
+    assert b'Connected' in response.data
+    assert b'Disconnected' in response.data
+    assert b'old-phone' in response.data
+    assert MAC.encode() in response.data
+    assert b'role="tablist"' in response.data
+    assert b'aria-controls="connected-panel"' in response.data
+    assert b'id="disconnected-panel"' in response.data
+    assert b'device_state_signature' in response.data
+
+
 # --- carousel posts -------------------------------------------------------
 
 def test_portal_only_renders_posts_marked_visible(client, services):

@@ -186,11 +186,13 @@ log-dhcp
             self.logger.error(f"Error checking AP status: {e}")
             return False
 
-    def get_dhcp_leases(self):
+    def get_dhcp_leases(self, strict=False):
         """Return {MAC: {'ip', 'hostname', 'lease_expiry'}} for active leases."""
         leases = {}
         try:
             if not os.path.exists(DNSMASQ_LEASES):
+                if strict:
+                    raise FileNotFoundError(DNSMASQ_LEASES)
                 return leases
             subnet_prefix = '.'.join(self.ip.split('.')[:3]) + '.'
             now = int(time.time())
@@ -207,6 +209,8 @@ log-dhcp
                                            'lease_expiry': lease_expiry}
         except Exception as e:
             self.logger.warning(f"DHCP leases check failed: {e}")
+            if strict:
+                raise RuntimeError("Could not read DHCP leases") from e
         return leases
 
     def get_stations(self):
@@ -238,6 +242,7 @@ log-dhcp
                     stations.append(info)
         except Exception as e:
             self.logger.warning(f"IW station dump failed: {e}")
+            raise
         return stations
 
     def resolve_mac(self, ip_address):

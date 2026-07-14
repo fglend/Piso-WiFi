@@ -219,6 +219,51 @@ def test_new_device_triggers_policy_callback(network_controller):
     assert seen == [MAC]
 
 
+def test_device_snapshot_callback_receives_connect_and_disconnect(network_controller):
+    snapshots = []
+    network_controller.on_device_snapshot = snapshots.append
+    network_controller.on_new_device = lambda mac: None
+    station = {'mac_address': MAC, 'ip': '192.168.4.20',
+               'hostname': 'phone', 'connected': True}
+
+    with patch.object(network_controller.ap, 'get_stations',
+                      side_effect=[[station], [], []]):
+        network_controller.get_connected_devices()
+        network_controller.get_connected_devices()
+        network_controller.get_connected_devices()
+
+    assert snapshots == [(station,), (), ()]
+
+
+def test_single_empty_snapshot_does_not_disconnect_device(network_controller):
+    network_controller.on_new_device = lambda mac: None
+    station = {'mac_address': MAC, 'ip': '192.168.4.20',
+               'hostname': 'phone', 'connected': True}
+
+    with patch.object(network_controller.ap, 'get_stations',
+                      side_effect=[[station], [], [station]]):
+        first = network_controller.get_connected_devices()
+        transient_empty = network_controller.get_connected_devices()
+        recovered = network_controller.get_connected_devices()
+
+    assert first == [station]
+    assert transient_empty == [station]
+    assert recovered == [station]
+
+
+def test_discovery_error_preserves_last_known_snapshot(network_controller):
+    network_controller.on_new_device = lambda mac: None
+    station = {'mac_address': MAC, 'ip': '192.168.4.20',
+               'hostname': 'phone', 'connected': True}
+
+    with patch.object(network_controller.ap, 'get_stations',
+                      side_effect=[[station], RuntimeError('temporary failure')]):
+        network_controller.get_connected_devices()
+        after_error = network_controller.get_connected_devices()
+
+    assert after_error == [station]
+
+
 def test_poe_ap_is_not_treated_as_a_customer_device(settings):
     settings.network_mode = 'wired'
     settings.poe_ap_mac_address = POE_AP_MAC.lower()

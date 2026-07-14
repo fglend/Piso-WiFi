@@ -30,6 +30,8 @@ class Services:
         # Policy for devices seen for the first time: paying users get access
         # and their plan limits back, everyone else is blocked.
         self.network_controller.on_new_device = self.handle_new_device
+        self.network_controller.on_device_snapshot = (
+            self.user_manager.sync_connection_snapshot)
 
         logger.info("Initializing time manager...")
         self.time_manager = TimeManager(self.user_manager, self.network_controller,

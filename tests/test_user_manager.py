@@ -1,3 +1,6 @@
+import os
+import stat
+
 from tests.conftest import MAC, OTHER_MAC
 
 
@@ -91,6 +94,54 @@ def test_session_clock_persistence(user_manager):
 
 def test_check_health(user_manager):
     assert user_manager.check_health() is True
+
+
+def test_database_file_is_owner_only(user_manager):
+    mode = stat.S_IMODE(os.stat(user_manager.db_path).st_mode)
+
+    assert mode == 0o600
+
+
+def test_connection_history_tracks_latest_disconnected_device(user_manager):
+    user_manager.sync_connection_snapshot([{
+        'mac_address': MAC, 'hostname': 'phone', 'ip': '192.168.4.20'}])
+    # Repeated discovery/restart must update the open session, not duplicate it.
+    user_manager.sync_connection_snapshot([{
+        'mac_address': MAC, 'hostname': 'renamed-phone',
+        'ip': '192.168.4.21'}])
+    user_manager.sync_connection_snapshot([])
+    user_manager.sync_connection_snapshot([])
+
+    history = user_manager.get_disconnected_devices()
+
+    assert len(history) == 1
+    assert history[0]['mac_address'] == MAC
+    assert history[0]['hostname'] == 'renamed-phone'
+    assert history[0]['ip_address'] == '192.168.4.21'
+    assert history[0]['connected_at']
+    assert history[0]['disconnected_at']
+
+
+def test_reconnected_device_is_not_listed_as_disconnected(user_manager):
+    user_manager.sync_connection_snapshot([{
+        'mac_address': MAC, 'hostname': 'phone', 'ip': '192.168.4.20'}])
+    user_manager.sync_connection_snapshot([])
+    user_manager.sync_connection_snapshot([])
+    user_manager.sync_connection_snapshot([{
+        'mac_address': MAC, 'hostname': 'phone', 'ip': '192.168.4.22'}])
+
+    assert user_manager.get_disconnected_devices() == []
+
+
+def test_restart_empty_snapshot_does_not_close_open_session(user_manager):
+    user_manager.sync_connection_snapshot([{
+        'mac_address': MAC, 'hostname': 'phone', 'ip': '192.168.4.20'}])
+
+    user_manager.sync_connection_snapshot([])
+    user_manager.sync_connection_snapshot([{
+        'mac_address': MAC, 'hostname': 'phone', 'ip': '192.168.4.20'}])
+
+    assert user_manager.get_disconnected_devices() == []
 
 
 def test_post_visibility_is_independent_per_post(user_manager):

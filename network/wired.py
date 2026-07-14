@@ -106,12 +106,15 @@ log-dhcp
                     states[mac] = parts[-1]
         except Exception as e:
             self.logger.warning(f"Neighbor table read failed: {e}")
+            return None
         return states
 
     def get_stations(self):
         stations = []
         neigh = self._neighbor_states()
-        for mac, lease in self.get_dhcp_leases().items():
+        if neigh is None:
+            raise RuntimeError("Could not read the LAN neighbor table")
+        for mac, lease in self.get_dhcp_leases(strict=True).items():
             state = neigh.get(mac)
             if state in ACTIVE_NEIGH_STATES:
                 stations.append({

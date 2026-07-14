@@ -1,8 +1,16 @@
 import logging
 import os
+import re
 import secrets
 import sqlite3
 import string
+from ipaddress import AddressValueError, IPv4Address
+
+
+MAC_ADDRESS_RE = re.compile(r'^(?:[0-9A-F]{2}:){5}[0-9A-F]{2}$')
+CONNECTION_HISTORY_DAYS = 30
+MAX_CLOSED_CONNECTIONS = 2000
+DISCONNECT_CONFIRMATION_POLLS = 2
 
 
 class UserManager:
@@ -15,6 +23,10 @@ class UserManager:
             os.makedirs(directory, exist_ok=True)
 
         self._init_db()
+        try:
+            os.chmod(self.db_path, 0o600)
+        except OSError as exc:
+            self.logger.warning("Could not restrict database permissions: %s", exc)
 
     def _connect(self):
         conn = sqlite3.connect(self.db_path)
@@ -122,8 +134,38 @@ class UserManager:
                 )
             ''')
 
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS device_connections (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    mac_address TEXT NOT NULL,
+                    hostname TEXT NOT NULL DEFAULT '',
+                    ip_address TEXT,
+                    connected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    missed_polls INTEGER NOT NULL DEFAULT 0,
+                    disconnected_at TIMESTAMP
+                )
+            ''')
+            c.execute('''
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_device_connections_open
+                ON device_connections (mac_address)
+                WHERE disconnected_at IS NULL
+            ''')
+            c.execute('''
+                CREATE INDEX IF NOT EXISTS idx_device_connections_disconnected
+                ON device_connections (disconnected_at)
+            ''')
+            c.execute('''
+                CREATE INDEX IF NOT EXISTS idx_device_connections_latest
+                ON device_connections
+                    (mac_address, disconnected_at DESC, id DESC)
+            ''')
+
             # Additive column migrations for databases created by older versions
             self._add_column_if_missing(c, 'transactions', 'source', "TEXT DEFAULT 'cash'")
+            self._add_column_if_missing(
+                c, 'device_connections', 'missed_polls',
+                'INTEGER NOT NULL DEFAULT 0')
 
             # Seed plans
             c.execute('''INSERT OR IGNORE INTO plans (name, download_kbps, upload_kbps)
@@ -149,6 +191,121 @@ class UserManager:
         cols = [row[1] for row in cursor.execute(f"PRAGMA table_info({table})")]
         if column not in cols:
             cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    # --- connection history -------------------------------------------------
+
+    def _normalize_connection_device(self, device):
+        mac = str(device.get('mac_address', '')).strip().upper()
+        if not MAC_ADDRESS_RE.fullmatch(mac):
+            self.logger.warning("Ignoring invalid connection-history MAC %r", mac)
+            return None
+        hostname = ''.join(
+            character for character in str(device.get('hostname') or '')
+            if character.isprintable()).strip()[:255]
+        try:
+            ip_address = str(IPv4Address(str(device.get('ip') or '').strip()))
+        except AddressValueError:
+            ip_address = None
+        return mac, {'hostname': hostname, 'ip_address': ip_address}
+
+    def sync_connection_snapshot(self, devices):
+        """Persist one open session per present MAC and close absent sessions."""
+        normalized = [
+            self._normalize_connection_device(dict(device))
+            for device in devices
+        ]
+        devices_by_mac = dict(item for item in normalized if item is not None)
+        conn = self._connect()
+        try:
+            conn.execute('BEGIN IMMEDIATE')
+            for mac, device in devices_by_mac.items():
+                cursor = conn.execute('''
+                    UPDATE device_connections
+                    SET hostname = ?, ip_address = ?,
+                        last_seen_at = CURRENT_TIMESTAMP, missed_polls = 0
+                    WHERE mac_address = ? AND disconnected_at IS NULL
+                ''', (device['hostname'], device['ip_address'], mac))
+                if cursor.rowcount == 0:
+                    conn.execute('''
+                        INSERT INTO device_connections
+                            (mac_address, hostname, ip_address)
+                        VALUES (?, ?, ?)
+                    ''', (mac, device['hostname'], device['ip_address']))
+
+            present_macs = tuple(devices_by_mac)
+            if present_macs:
+                placeholders = ','.join('?' for _ in present_macs)
+                conn.execute(f'''
+                    UPDATE device_connections
+                    SET missed_polls = missed_polls + 1
+                    WHERE disconnected_at IS NULL
+                      AND mac_address NOT IN ({placeholders})
+                ''', present_macs)
+            else:
+                conn.execute('''
+                    UPDATE device_connections
+                    SET missed_polls = missed_polls + 1
+                    WHERE disconnected_at IS NULL
+                ''')
+            conn.execute('''
+                UPDATE device_connections
+                SET disconnected_at = CURRENT_TIMESTAMP
+                WHERE disconnected_at IS NULL AND missed_polls >= ?
+            ''', (DISCONNECT_CONFIRMATION_POLLS,))
+
+            conn.execute('''
+                DELETE FROM device_connections
+                WHERE disconnected_at IS NOT NULL
+                  AND disconnected_at < datetime('now', ?)
+            ''', (f'-{CONNECTION_HISTORY_DAYS} days',))
+            conn.execute('''
+                DELETE FROM device_connections
+                WHERE disconnected_at IS NOT NULL
+                  AND id NOT IN (
+                      SELECT id FROM device_connections
+                      WHERE disconnected_at IS NOT NULL
+                      ORDER BY disconnected_at DESC, id DESC
+                      LIMIT ?
+                  )
+            ''', (MAX_CLOSED_CONNECTIONS,))
+            conn.commit()
+            return True
+        except Exception as exc:
+            conn.rollback()
+            self.logger.error("Could not sync connection history: %s", exc)
+            return False
+        finally:
+            conn.close()
+
+    def get_disconnected_devices(self, limit=100):
+        safe_limit = max(1, min(int(limit), 500))
+        conn = self._connect()
+        try:
+            rows = conn.execute('''
+                SELECT dc.mac_address, dc.hostname, dc.ip_address,
+                       dc.connected_at, dc.last_seen_at, dc.disconnected_at
+                FROM device_connections AS dc
+                WHERE dc.disconnected_at IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM device_connections AS open_session
+                      WHERE open_session.mac_address = dc.mac_address
+                        AND open_session.disconnected_at IS NULL
+                  )
+                  AND dc.id = (
+                      SELECT closed_session.id
+                      FROM device_connections AS closed_session
+                      WHERE closed_session.mac_address = dc.mac_address
+                        AND closed_session.disconnected_at IS NOT NULL
+                      ORDER BY closed_session.disconnected_at DESC,
+                               closed_session.id DESC
+                      LIMIT 1
+                  )
+                ORDER BY dc.disconnected_at DESC, dc.id DESC
+                LIMIT ?
+            ''', (safe_limit,)).fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            conn.close()
 
     # --- dynamic app settings ------------------------------------------------
 

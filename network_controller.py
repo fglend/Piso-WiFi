@@ -15,6 +15,7 @@ from network.wired import WiredGateway
 
 
 class NetworkController:
+    DISCONNECT_CONFIRMATION_POLLS = 2
     # Bandwidth plans (kbps) - fallbacks when the plans table is unavailable
     DEFAULT_DOWNLOAD_SPEED = 2048
     DEFAULT_UPLOAD_SPEED = 1024
@@ -63,8 +64,12 @@ class NetworkController:
         # Called with a MAC the first time a device is seen; services.py wires
         # this to a balance check. Default: block unknown devices.
         self.on_new_device = self.block_mac
+        self.on_device_snapshot = lambda devices: None
 
         self.connected_devices = set()
+        self._known_devices = {}
+        self._absence_counts = {}
+        self._discovery_lock = RLock()
         self._access_lock = RLock()
         self.allowed_macs = frozenset()
 
@@ -89,6 +94,10 @@ class NetworkController:
     # --- device discovery -------------------------------------------------
 
     def get_connected_devices(self):
+        with self._discovery_lock:
+            return self._get_connected_devices()
+
+    def _get_connected_devices(self):
         try:
             # Work with copies so station data owned by a backend is never
             # mutated. MACs are canonicalized for case-insensitive matching.
@@ -100,6 +109,29 @@ class NetworkController:
                 device for device in devices
                 if device['mac_address'] not in self.trusted_macs
             ]
+
+            observed_by_mac = {
+                device['mac_address']: device for device in devices
+            }
+            absence_counts = {
+                mac: self._absence_counts.get(mac, 0) + 1
+                for mac in self._known_devices
+                if mac not in observed_by_mac
+            }
+            pending_devices = {
+                mac: dict(self._known_devices[mac])
+                for mac, misses in absence_counts.items()
+                if misses < self.DISCONNECT_CONFIRMATION_POLLS
+            }
+            effective_by_mac = {**pending_devices, **observed_by_mac}
+            devices = [dict(device) for device in effective_by_mac.values()]
+            self._known_devices = {
+                mac: dict(device) for mac, device in effective_by_mac.items()
+            }
+            self._absence_counts = {
+                mac: misses for mac, misses in absence_counts.items()
+                if mac in pending_devices
+            }
 
             current_macs = {d['mac_address'] for d in devices}
             new_devices = current_macs - self.connected_devices
@@ -114,11 +146,21 @@ class NetworkController:
             for mac in disconnected:
                 self.logger.info(f"Device disconnected: {mac}")
 
+            # Persist the authoritative observed snapshot. The effective list
+            # returned to callers has a one-poll UI/metering debounce, while
+            # SQLite independently confirms absence across polls and restarts.
+            snapshot = tuple(
+                dict(device) for device in observed_by_mac.values())
+            try:
+                self.on_device_snapshot(snapshot)
+            except Exception as exc:
+                self.logger.error("Device snapshot handler failed: %s", exc)
+
             self.connected_devices = current_macs
             return devices
         except Exception as e:
             self.logger.error(f"Error getting connected devices: {e}")
-            return []
+            return [dict(device) for device in self._known_devices.values()]
 
     def resolve_ip(self, mac_address):
         return self.ap.resolve_ip(mac_address)

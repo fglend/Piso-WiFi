@@ -73,6 +73,14 @@ def _form_text(name, default='', maximum=120):
     return value[:maximum]
 
 
+def _device_state_signature(connected, disconnected):
+    connected_state = sorted(device['mac_address'] for device in connected)
+    disconnected_state = sorted(
+        f"{device['mac_address']}@{device['disconnected_at']}"
+        for device in disconnected)
+    return '|'.join(connected_state) + '::' + '|'.join(disconnected_state)
+
+
 @admin_bp.route('/admin')
 @admin_required
 def dashboard():
@@ -85,7 +93,13 @@ def dashboard():
         ])
         plans = svc.user_manager.get_plans()
         revenue = svc.user_manager.get_revenue_summary()
-        return render_template('admin.html', devices=devices, plans=plans,
+        disconnected_devices = svc.user_manager.get_disconnected_devices()
+        device_state_signature = _device_state_signature(
+            devices, disconnected_devices)
+        return render_template('admin.html', devices=devices,
+                               disconnected_devices=disconnected_devices,
+                               device_state_signature=device_state_signature,
+                               plans=plans,
                                minutes_per_peso=svc.settings.minutes_per_peso,
                                revenue=revenue,
                                app_settings=app_settings,
@@ -103,10 +117,14 @@ def dashboard_live():
     devices = _dashboard_devices(svc)
     revenue = svc.user_manager.get_revenue_summary()
     active_devices = [device for device in devices if device.get('time_balance', 0) > 0]
+    disconnected_devices = svc.user_manager.get_disconnected_devices()
     return jsonify({
         'revenue': revenue,
         'device_count': len(devices),
         'active_device_count': len(active_devices),
+        'disconnected_device_count': len(disconnected_devices),
+        'device_state_signature': _device_state_signature(
+            devices, disconnected_devices),
         'minutes_per_peso': svc.settings.minutes_per_peso,
     })
 

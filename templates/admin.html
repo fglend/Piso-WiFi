@@ -47,9 +47,25 @@
 
 <div class="card">
     <div class="card-head">
-        <h2 class="mb-0">Connected Devices</h2>
+        <h2 class="mb-0">Device History</h2>
     </div>
-    <div class="table-wrap">
+    <div class="device-tabs" role="tablist" aria-label="Device connection status">
+        <button type="button" class="device-tab active" role="tab"
+                id="connected-tab" aria-selected="true"
+                aria-controls="connected-panel" data-device-tab="connected-panel"
+                tabindex="0">
+            Connected <span class="badge badge-muted" id="connected-tab-count">{{ devices|length }}</span>
+        </button>
+        <button type="button" class="device-tab" role="tab"
+                id="disconnected-tab" aria-selected="false"
+                aria-controls="disconnected-panel" data-device-tab="disconnected-panel"
+                tabindex="-1">
+            Disconnected
+            <span class="badge badge-muted" id="disconnected-tab-count">{{ disconnected_devices|length }}</span>
+        </button>
+    </div>
+    <div class="table-wrap device-tab-panel" id="connected-panel"
+         role="tabpanel" aria-labelledby="connected-tab">
         <table class="table">
             <thead>
                 <tr>
@@ -126,11 +142,43 @@
             </tbody>
         </table>
     </div>
+    <div class="table-wrap device-tab-panel" id="disconnected-panel"
+         role="tabpanel" aria-labelledby="disconnected-tab" hidden>
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>MAC Address</th>
+                    <th>Hostname</th>
+                    <th>Last IP Address</th>
+                    <th>Connected At (UTC)</th>
+                    <th>Disconnected At (UTC)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for device in disconnected_devices %}
+                <tr>
+                    <td class="text-break">{{ device.mac_address }}</td>
+                    <td>{{ device.hostname or 'Unknown' }}</td>
+                    <td>{{ device.ip_address or 'Unknown' }}</td>
+                    <td>{{ device.connected_at }}</td>
+                    <td>{{ device.disconnected_at }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="5" class="text-center muted">
+                        No disconnected devices in the last 30 days
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
 </div>
 <script>
 (function () {
     var refreshSeconds = Number({{ app_settings.dashboard_refresh_seconds|int }});
     var liveUrl = '{{ url_for('admin.dashboard_live') }}';
+    var renderedDeviceState = {{ device_state_signature|tojson }};
 
     function peso(value) {
         return '₱' + Number(value || 0).toFixed(2);
@@ -147,6 +195,10 @@
         fetch(liveUrl, {headers: {'Accept': 'application/json'}})
             .then(function (response) { return response.json(); })
             .then(function (data) {
+                if (data.device_state_signature !== renderedDeviceState) {
+                    window.location.reload();
+                    return;
+                }
                 setText('revenue-day', peso(data.revenue.day));
                 setText('revenue-week', peso(data.revenue.week));
                 setText('revenue-month', peso(data.revenue.month));
@@ -157,6 +209,45 @@
                 }));
             })
             .catch(function () {});
+    }
+
+    var deviceTabs = Array.from(document.querySelectorAll('[data-device-tab]'));
+
+    function activateDeviceTab(button, moveFocus) {
+        deviceTabs.forEach(function (tab) {
+            var selected = tab === button;
+            tab.classList.toggle('active', selected);
+            tab.setAttribute('aria-selected', selected ? 'true' : 'false');
+            tab.setAttribute('tabindex', selected ? '0' : '-1');
+            document.getElementById(tab.dataset.deviceTab).hidden = !selected;
+        });
+        window.sessionStorage.setItem('device-history-tab', button.id);
+        if (moveFocus) {
+            button.focus();
+        }
+    }
+
+    deviceTabs.forEach(function (button, index) {
+        button.addEventListener('click', function () {
+            activateDeviceTab(button, false);
+        });
+        button.addEventListener('keydown', function (event) {
+            var targetIndex = null;
+            if (event.key === 'ArrowRight') targetIndex = (index + 1) % deviceTabs.length;
+            if (event.key === 'ArrowLeft') targetIndex = (index - 1 + deviceTabs.length) % deviceTabs.length;
+            if (event.key === 'Home') targetIndex = 0;
+            if (event.key === 'End') targetIndex = deviceTabs.length - 1;
+            if (targetIndex !== null) {
+                event.preventDefault();
+                activateDeviceTab(deviceTabs[targetIndex], true);
+            }
+        });
+    });
+
+    var savedTab = window.sessionStorage.getItem('device-history-tab');
+    var savedButton = document.getElementById(savedTab || '');
+    if (savedButton && savedButton.matches('[data-device-tab]')) {
+        activateDeviceTab(savedButton, false);
     }
 
     if (refreshSeconds >= 3) {
