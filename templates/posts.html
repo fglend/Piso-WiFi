@@ -1,5 +1,20 @@
 {% extends "base.html" %}
 
+{% macro description_editor(field_id, value='') %}
+<div class="post-format-editor">
+    <div class="post-format-toolbar" role="toolbar" aria-label="Description formatting">
+        <button type="button" class="btn btn-ghost btn-sm" data-post-format="bold"
+                aria-controls="{{ field_id }}" aria-label="Bold selected text"><strong>B</strong></button>
+        <button type="button" class="btn btn-ghost btn-sm" data-post-format="italic"
+                aria-controls="{{ field_id }}" aria-label="Italicize selected text"><em>I</em></button>
+        <button type="button" class="btn btn-ghost btn-sm" data-post-format="bullets"
+                aria-controls="{{ field_id }}" aria-label="Toggle bullet list">&bull; List</button>
+    </div>
+    <textarea id="{{ field_id }}" name="description" maxlength="500" rows="4">{{ value }}</textarea>
+    <div class="muted small">Line breaks are preserved. Select text, then choose Bold, Italic, or List.</div>
+</div>
+{% endmacro %}
+
 {% block title %}Carousel Posts{% endblock %}
 
 {% block content %}
@@ -32,7 +47,7 @@
             </div>
             <div>
                 <label for="post-description">Description</label>
-                <textarea id="post-description" name="description" maxlength="500" rows="3"></textarea>
+                {{ description_editor('post-description') }}
             </div>
             <label class="check-row" for="visible-in-portal">
                 <input id="visible-in-portal" name="visible_in_portal" type="checkbox" value="1" checked>
@@ -75,8 +90,7 @@
                     <input type="hidden" name="post_id" value="{{ post.id }}">
                     <div>
                         <label for="post-description-{{ post.id }}">Description</label>
-                        <textarea id="post-description-{{ post.id }}" name="description"
-                                  maxlength="500" rows="3">{{ post.description }}</textarea>
+                        {{ description_editor('post-description-' ~ post.id, post.description) }}
                     </div>
                     <div>
                         <button type="submit" class="btn btn-primary btn-sm"
@@ -106,4 +120,58 @@
     <div class="card"><div class="card-body muted">No carousel posts yet.</div></div>
     {% endif %}
 </section>
+<script>
+(function () {
+    function replaceSelection(textarea, prefix, suffix, placeholder) {
+        var start = textarea.selectionStart;
+        var end = textarea.selectionEnd;
+        var selected = textarea.value.slice(start, end) || placeholder;
+        var replacement = prefix + selected + suffix;
+        var updated = textarea.value.slice(0, start) + replacement + textarea.value.slice(end);
+        if (updated.length > textarea.maxLength) return;
+        textarea.value = updated;
+        textarea.focus();
+        textarea.setSelectionRange(start + prefix.length, start + prefix.length + selected.length);
+    }
+
+    function toggleBullets(textarea) {
+        var selectionStart = textarea.selectionStart;
+        var lineStart = textarea.value.lastIndexOf('\n', Math.max(0, selectionStart - 1)) + 1;
+        var nextBreak = textarea.value.indexOf('\n', textarea.selectionEnd);
+        var endsAtBreak = textarea.selectionEnd > selectionStart &&
+            textarea.value.charAt(textarea.selectionEnd - 1) === '\n';
+        var lineEnd = endsAtBreak ? textarea.selectionEnd - 1 :
+            (nextBreak === -1 ? textarea.value.length : nextBreak);
+        var selectedLines = textarea.value.slice(lineStart, lineEnd).split('\n');
+        var nonEmpty = selectedLines.filter(function (line) { return line.trim(); });
+        var removeBullets = nonEmpty.length > 0 && nonEmpty.every(function (line) {
+            return /^\s*- /.test(line);
+        });
+        var formatted = selectedLines.map(function (line) {
+            if (!line.trim()) return removeBullets ? line : '- ';
+            if (removeBullets) return line.replace(/^(\s*)- /, '$1');
+            return /^\s*- /.test(line) ? line : '- ' + line;
+        }).join('\n');
+        var updated = textarea.value.slice(0, lineStart) + formatted + textarea.value.slice(lineEnd);
+        if (updated.length > textarea.maxLength) return;
+        textarea.value = updated;
+        textarea.focus();
+        textarea.setSelectionRange(lineStart, lineStart + formatted.length);
+    }
+
+    document.addEventListener('click', function (event) {
+        var button = event.target.closest('[data-post-format]');
+        if (!button) return;
+        var textarea = document.getElementById(button.getAttribute('aria-controls'));
+        if (!textarea) return;
+        if (button.dataset.postFormat === 'bold') {
+            replaceSelection(textarea, '**', '**', 'bold text');
+        } else if (button.dataset.postFormat === 'italic') {
+            replaceSelection(textarea, '*', '*', 'italic text');
+        } else {
+            toggleBullets(textarea);
+        }
+    });
+})();
+</script>
 {% endblock %}

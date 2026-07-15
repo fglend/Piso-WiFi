@@ -7,6 +7,7 @@ from flask import (Blueprint, abort, current_app, flash, jsonify, redirect,
                    render_template, request, session, url_for)
 
 from auth import request_is_loopback, verify_admin
+from post_formatting import render_post_description
 from pricing import format_duration
 
 portal_bp = Blueprint('portal', __name__)
@@ -56,7 +57,11 @@ def index():
         {'pesos': pesos, 'label': format_duration(minutes)}
         for pesos, minutes in svc.user_manager.get_rates().items()
     ]
-    posts = svc.user_manager.get_posts(active_only=True)
+    posts = [
+        {**post, 'description_html': render_post_description(
+            post.get('description', ''))}
+        for post in svc.user_manager.get_posts(active_only=True)
+    ]
     return render_template(
         'portal.html',
         device=device,

@@ -1,5 +1,6 @@
 from io import BytesIO
 
+from post_formatting import render_post_description
 from tests.conftest import MAC
 
 
@@ -188,6 +189,49 @@ def test_dashboard_has_connected_and_disconnected_device_tabs(
 
 # --- carousel posts -------------------------------------------------------
 
+
+def test_post_description_renderer_supports_safe_basic_formatting():
+    rendered = str(render_post_description(
+        'First line\nSecond **bold** and *italic*\n\n- One\n- Two\n<script>'))
+
+    assert ('<p>First line<br>Second <strong>bold</strong> and '
+            '<em>italic</em></p>') in rendered
+    assert '<ul><li>One</li><li>Two</li></ul>' in rendered
+    assert '&lt;script&gt;' in rendered
+    assert '<script>' not in rendered
+
+
+def test_post_description_renderer_escapes_html_inside_formatting():
+    rendered = str(render_post_description(
+        '**<img src=x onerror=alert(1)>**\n'
+        '- <svg onload=alert(2)>\n'
+        'Unmatched **bold'))
+
+    assert '<img' not in rendered
+    assert '<svg' not in rendered
+    assert '&lt;img src=x onerror=alert(1)&gt;' in rendered
+    assert '&lt;svg onload=alert(2)&gt;' in rendered
+    assert 'Unmatched **bold' in rendered
+
+
+def test_post_description_renderer_preserves_literal_math_asterisks():
+    rendered = str(render_post_description('2 * 3 and 4 * 5'))
+
+    assert rendered == '<p>2 * 3 and 4 * 5</p>'
+
+
+def test_portal_renders_formatted_post_description(client, services):
+    services.user_manager.create_post(
+        'Formatted post',
+        'Welcome\nThis is **bold** and *italic*.\n\n- Fast\n- Safe',
+        'formatted.jpg', active=True)
+
+    response = client.get('/')
+
+    assert b'Welcome<br>This is <strong>bold</strong> and <em>italic</em>.' in response.data
+    assert b'<ul><li>Fast</li><li>Safe</li></ul>' in response.data
+
+
 def test_portal_only_renders_posts_marked_visible(client, services):
     services.user_manager.create_post(
         'Visible promotion', 'Shown in the carousel', 'visible.jpg', active=True)
@@ -231,6 +275,9 @@ def test_posts_admin_page_has_per_post_visibility_controls(
     assert b'Hidden post' in resp.data
     assert b'Visible' in resp.data
     assert b'Hidden' in resp.data
+    assert b'data-post-format="bold"' in resp.data
+    assert b'data-post-format="italic"' in resp.data
+    assert b'data-post-format="bullets"' in resp.data
 
 
 def test_admin_updates_post_description(
