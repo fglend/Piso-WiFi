@@ -7,6 +7,7 @@ services:
     volumes:
       - .:/app
     environment:
+      TZ: Asia/Manila
       FLASK_ENV: development
       FLASK_HOST: 0.0.0.0
       FLASK_PORT: 5000

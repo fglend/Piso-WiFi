@@ -283,7 +283,10 @@ class UserManager:
         try:
             rows = conn.execute('''
                 SELECT dc.mac_address, dc.hostname, dc.ip_address,
-                       dc.connected_at, dc.last_seen_at, dc.disconnected_at
+                       datetime(dc.connected_at, 'localtime') AS connected_at,
+                       datetime(dc.last_seen_at, 'localtime') AS last_seen_at,
+                       datetime(dc.disconnected_at, 'localtime')
+                           AS disconnected_at
                 FROM device_connections AS dc
                 WHERE dc.disconnected_at IS NOT NULL
                   AND NOT EXISTS (
@@ -346,7 +349,9 @@ class UserManager:
     def get_posts(self, active_only=False):
         conn = self._connect()
         try:
-            query = ('SELECT id, title, description, image_file, active, created_at '
+            # Timestamps are stored in UTC; render in the Pi's local timezone.
+            query = ('SELECT id, title, description, image_file, active, '
+                     "datetime(created_at, 'localtime') AS created_at "
                      'FROM posts')
             if active_only:
                 query += ' WHERE active = 1'
@@ -744,7 +749,11 @@ class UserManager:
     def get_vouchers(self, include_redeemed=False):
         conn = self._connect()
         try:
-            query = 'SELECT code, minutes, created_at, redeemed_by, redeemed_at FROM vouchers'
+            query = ("SELECT code, minutes, "
+                     "datetime(created_at, 'localtime') AS created_at, "
+                     "redeemed_by, "
+                     "datetime(redeemed_at, 'localtime') AS redeemed_at "
+                     "FROM vouchers")
             if not include_redeemed:
                 query += ' WHERE redeemed_at IS NULL'
             query += ' ORDER BY created_at DESC'
@@ -761,7 +770,9 @@ class UserManager:
         conn = self._connect()
         try:
             rows = conn.execute('''
-                SELECT t.amount, t.minutes, t.source, t.created_at, u.mac_address
+                SELECT t.amount, t.minutes, t.source,
+                       datetime(t.created_at, 'localtime') AS created_at,
+                       u.mac_address
                 FROM transactions t LEFT JOIN users u ON u.id = t.user_id
                 ORDER BY t.created_at DESC LIMIT ?
             ''', (limit,)).fetchall()
@@ -778,15 +789,17 @@ class UserManager:
             row = conn.execute('''
                 SELECT
                     COALESCE(SUM(CASE
-                        WHEN date(created_at) = date('now', 'localtime') THEN amount
-                        ELSE 0
+                        WHEN date(created_at, 'localtime') = date('now', 'localtime')
+                        THEN amount ELSE 0
                     END), 0) AS day,
                     COALESCE(SUM(CASE
-                        WHEN datetime(created_at) >= datetime('now', 'localtime', '-6 days')
+                        WHEN datetime(created_at, 'localtime')
+                             >= datetime('now', 'localtime', '-6 days')
                         THEN amount ELSE 0
                     END), 0) AS week,
                     COALESCE(SUM(CASE
-                        WHEN strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now', 'localtime')
+                        WHEN strftime('%Y-%m', created_at, 'localtime')
+                             = strftime('%Y-%m', 'now', 'localtime')
                         THEN amount ELSE 0
                     END), 0) AS month
                 FROM transactions
