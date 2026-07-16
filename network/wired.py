@@ -29,37 +29,8 @@ class WiredGateway(APManager):
         self.logger.info("System requirements verified (wired gateway mode)")
 
     def write_configs(self):
-        s = self.settings
-        dnsmasq_config = f"""
-# Interface configuration
-interface={self.ap_interface}
-no-dhcp-interface=lo
-bind-interfaces
-
-# DHCP server configuration
-# authoritative: NAK unknown-lease requests immediately so phones that switch
-# between random and device MAC re-DHCP in seconds instead of backing off for
-# minutes. Short leases let abandoned random-MAC leases expire quickly.
-dhcp-authoritative
-dhcp-rapid-commit
-dhcp-range={s.dhcp_range_start},{s.dhcp_range_end},{s.network_mask},2h
-dhcp-option=option:router,{self.ip}
-dhcp-option=option:dns-server,{self.ip}
-dhcp-option=option:netmask,{s.network_mask}
-
-# DNS configuration
-no-resolv
-no-poll
-host-record={s.portal_hostname},{self.ip}
-server=8.8.8.8
-server=8.8.4.4
-
-# Logging
-log-dhcp
-"""
-        with open(self.dnsmasq_conf, 'w') as f:
-            f.write(dnsmasq_config.strip())
-        os.chmod(self.dnsmasq_conf, 0o644)
+        # Same dnsmasq policy as AP mode (shared template); no hostapd here.
+        self._write_dnsmasq_conf()
         self.logger.info("Wired gateway configuration written")
 
     def start(self):

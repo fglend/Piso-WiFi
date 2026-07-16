@@ -86,7 +86,11 @@ Type=simple
 User=root
 WorkingDirectory=/opt/piso_wifi
 Environment=PATH=/opt/piso_wifi/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStart=/opt/piso_wifi/venv/bin/python main.py
+# ONE worker only: the app hosts the AP/firewall/metering singletons;
+# a second worker would reconfigure the AP and double-meter customers.
+# Concurrency comes from threads.
+ExecStart=/opt/piso_wifi/venv/bin/gunicorn --workers 1 --threads 4 \
+    --bind 0.0.0.0:5000 --timeout 60 wsgi:app
 Restart=always
 
 [Install]

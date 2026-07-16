@@ -105,6 +105,8 @@ class NetworkController:
             self.firewall.flush_device_state(ip_address)
         except Exception as e:
             self.logger.error(f"State flush failed for {ip_address}: {e}")
+        # The cached lease/neighbor lookups may still name the old MAC.
+        self.ap.invalidate_caches()
 
     def _get_connected_devices(self):
         try:

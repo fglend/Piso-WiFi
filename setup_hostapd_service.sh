@@ -9,7 +9,7 @@ Wants=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/sbin/hostapd -dd /etc/hostapd/hostapd.conf
+ExecStart=/usr/sbin/hostapd /etc/hostapd/hostapd.conf
 Restart=on-failure
 RestartSec=5
 KillMode=process

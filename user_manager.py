@@ -4,7 +4,9 @@ import re
 import secrets
 import sqlite3
 import string
+from contextlib import contextmanager
 from ipaddress import AddressValueError, IPv4Address
+from types import SimpleNamespace
 
 
 MAC_ADDRESS_RE = re.compile(r'^(?:[0-9A-F]{2}:){5}[0-9A-F]{2}$')
@@ -31,7 +33,37 @@ class UserManager:
     def _connect(self):
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        # SD-card friendly settings: WAL avoids full journal rewrites on
+        # every commit (the metering loop writes every few seconds), NORMAL
+        # skips redundant fsyncs (still durable for WAL), and busy_timeout
+        # prevents 'database is locked' now that the server is threaded.
+        conn.execute('PRAGMA journal_mode=WAL')
+        conn.execute('PRAGMA synchronous=NORMAL')
+        conn.execute('PRAGMA busy_timeout=5000')
         return conn
+
+    @contextmanager
+    def _with_conn(self, description, default=None, on_error=None):
+        """Open a connection, commit on success, roll back and log on error.
+
+        Yields a holder object; handlers set holder.result. On any exception
+        the error is logged as '<description> failed' and holder.result is
+        replaced with `default` (or on_error() when given).
+        """
+        conn = self._connect()
+        holder = SimpleNamespace(result=default)
+        try:
+            yield conn, holder
+            conn.commit()
+        except Exception as exc:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            self.logger.error(f"{description} failed: {exc}")
+            holder.result = on_error() if on_error else default
+        finally:
+            conn.close()
 
     def _init_db(self):
         """Initialize database tables (additive migrations only)."""
@@ -313,20 +345,16 @@ class UserManager:
     # --- dynamic app settings ------------------------------------------------
 
     def get_app_settings(self, defaults):
-        conn = self._connect()
-        try:
+        with self._with_conn('Loading app settings',
+                             on_error=lambda: dict(defaults)) as (conn, out):
             rows = conn.execute('SELECT key, value FROM app_settings').fetchall()
             stored = {row['key']: row['value'] for row in rows}
-            return {**defaults, **stored}
-        except Exception as e:
-            self.logger.error(f"Error loading app settings: {e}")
-            return dict(defaults)
-        finally:
-            conn.close()
+            out.result = {**defaults, **stored}
+        return out.result
 
     def update_app_settings(self, values):
-        conn = self._connect()
-        try:
+        with self._with_conn('Saving app settings',
+                             default=False) as (conn, out):
             for key, value in values.items():
                 conn.execute('''
                     INSERT INTO app_settings (key, value, updated_at)
@@ -335,20 +363,13 @@ class UserManager:
                         value = excluded.value,
                         updated_at = CURRENT_TIMESTAMP
                 ''', (key, str(value)))
-            conn.commit()
-            return True
-        except Exception as e:
-            self.logger.error(f"Error saving app settings: {e}")
-            conn.rollback()
-            return False
-        finally:
-            conn.close()
+            out.result = True
+        return out.result
 
     # --- advertisement posts -----------------------------------------------------
 
     def get_posts(self, active_only=False):
-        conn = self._connect()
-        try:
+        with self._with_conn('Listing posts', default=[]) as (conn, out):
             # Timestamps are stored in UTC; render in the Pi's local timezone.
             query = ('SELECT id, title, description, image_file, active, '
                      "datetime(created_at, 'localtime') AS created_at "
@@ -356,123 +377,71 @@ class UserManager:
             if active_only:
                 query += ' WHERE active = 1'
             query += ' ORDER BY created_at DESC, id DESC'
-            return [dict(r) for r in conn.execute(query).fetchall()]
-        except Exception as e:
-            self.logger.error(f"Error listing posts: {e}")
-            return []
-        finally:
-            conn.close()
+            out.result = [dict(r) for r in conn.execute(query).fetchall()]
+        return out.result
 
     def create_post(self, title, description, image_file, active=True):
-        conn = self._connect()
-        try:
+        with self._with_conn('Creating post', default=False) as (conn, out):
             conn.execute(
                 'INSERT INTO posts (title, description, image_file, active) '
                 'VALUES (?, ?, ?, ?)',
                 (title, description, image_file, 1 if active else 0))
-            conn.commit()
-            return True
-        except Exception as e:
-            self.logger.error(f"Error creating post: {e}")
-            conn.rollback()
-            return False
-        finally:
-            conn.close()
+            out.result = True
+        return out.result
 
     def set_post_active(self, post_id, active):
-        conn = self._connect()
-        try:
+        with self._with_conn(f'Updating post {post_id}',
+                             default=False) as (conn, out):
             cursor = conn.execute('UPDATE posts SET active = ? WHERE id = ?',
                                   (1 if active else 0, post_id))
-            if cursor.rowcount == 0:
-                return False
-            conn.commit()
-            return True
-        except Exception as e:
-            self.logger.error(f"Error updating post {post_id}: {e}")
-            conn.rollback()
-            return False
-        finally:
-            conn.close()
+            out.result = cursor.rowcount > 0
+        return out.result
 
     def update_post_description(self, post_id, description):
-        conn = self._connect()
-        try:
+        with self._with_conn(f'Updating post description {post_id}',
+                             default=False) as (conn, out):
             cursor = conn.execute(
                 'UPDATE posts SET description = ? WHERE id = ?',
                 (description, post_id))
-            if cursor.rowcount == 0:
-                return False
-            conn.commit()
-            return True
-        except Exception as e:
-            self.logger.error(
-                f"Error updating post description {post_id}: {e}")
-            conn.rollback()
-            return False
-        finally:
-            conn.close()
+            out.result = cursor.rowcount > 0
+        return out.result
 
     def delete_post(self, post_id):
         """Delete a post; returns its image_file so the caller can remove it."""
-        conn = self._connect()
-        try:
+        with self._with_conn(f'Deleting post {post_id}') as (conn, out):
             row = conn.execute('SELECT image_file FROM posts WHERE id = ?',
                                (post_id,)).fetchone()
-            if not row:
-                return None
-            conn.execute('DELETE FROM posts WHERE id = ?', (post_id,))
-            conn.commit()
-            return row['image_file']
-        except Exception as e:
-            self.logger.error(f"Error deleting post {post_id}: {e}")
-            conn.rollback()
-            return None
-        finally:
-            conn.close()
+            if row:
+                conn.execute('DELETE FROM posts WHERE id = ?', (post_id,))
+                out.result = row['image_file']
+        return out.result
 
     # --- pricing tiers ---------------------------------------------------------
 
     def get_rates(self):
         """Pricing tiers as {pesos: minutes}, ascending by pesos."""
-        conn = self._connect()
-        try:
-            rows = conn.execute('SELECT pesos, minutes FROM rates ORDER BY pesos').fetchall()
-            return {row['pesos']: row['minutes'] for row in rows}
-        except Exception as e:
-            self.logger.error(f"Error listing rates: {e}")
-            return {}
-        finally:
-            conn.close()
+        with self._with_conn('Listing rates', default={}) as (conn, out):
+            rows = conn.execute(
+                'SELECT pesos, minutes FROM rates ORDER BY pesos').fetchall()
+            out.result = {row['pesos']: row['minutes'] for row in rows}
+        return out.result
 
     def upsert_rate(self, pesos, minutes):
-        conn = self._connect()
-        try:
+        with self._with_conn(f'Saving rate ₱{pesos}',
+                             default=False) as (conn, out):
             conn.execute('''
                 INSERT INTO rates (pesos, minutes) VALUES (?, ?)
                 ON CONFLICT(pesos) DO UPDATE SET minutes = excluded.minutes
             ''', (pesos, minutes))
-            conn.commit()
-            return True
-        except Exception as e:
-            self.logger.error(f"Error saving rate ₱{pesos}: {e}")
-            conn.rollback()
-            return False
-        finally:
-            conn.close()
+            out.result = True
+        return out.result
 
     def delete_rate(self, pesos):
-        conn = self._connect()
-        try:
+        with self._with_conn(f'Deleting rate ₱{pesos}',
+                             default=False) as (conn, out):
             conn.execute('DELETE FROM rates WHERE pesos = ?', (pesos,))
-            conn.commit()
-            return True
-        except Exception as e:
-            self.logger.error(f"Error deleting rate ₱{pesos}: {e}")
-            conn.rollback()
-            return False
-        finally:
-            conn.close()
+            out.result = True
+        return out.result
 
     # --- balance / time -----------------------------------------------------
 
@@ -517,16 +486,11 @@ class UserManager:
             conn.close()
 
     def check_balance(self, mac_address):
-        conn = self._connect()
-        try:
+        with self._with_conn('Checking balance', default=0) as (conn, out):
             row = conn.execute('SELECT time_balance FROM users WHERE mac_address = ?',
                                (mac_address,)).fetchone()
-            return row['time_balance'] if row else 0
-        except Exception as e:
-            self.logger.error(f"Error checking balance: {e}")
-            return 0
-        finally:
-            conn.close()
+            out.result = row['time_balance'] if row else 0
+        return out.result
 
     def deduct_time(self, mac_address, minutes, manual=False):
         """Deduct time (fractional minutes allowed) and log the deduction."""
@@ -572,63 +536,66 @@ class UserManager:
     # --- device / plan info ---------------------------------------------------
 
     def get_device_info(self, mac_address):
-        conn = self._connect()
-        try:
+        with self._with_conn('Getting device info') as (conn, out):
             row = conn.execute('''
                 SELECT time_balance, status, download_limit, upload_limit,
                        plan, upgrade_requested
                 FROM users WHERE mac_address = ?
             ''', (mac_address,)).fetchone()
-            return dict(row) if row else None
-        except Exception as e:
-            self.logger.error(f"Error getting device info: {e}")
-            return None
-        finally:
-            conn.close()
+            out.result = dict(row) if row else None
+        return out.result
+
+    def get_devices_info(self, mac_addresses):
+        """Device info for many MACs in one query: {mac: info}."""
+        macs = [mac.upper() for mac in mac_addresses]
+        if not macs:
+            return {}
+        with self._with_conn('Getting devices info',
+                             default={}) as (conn, out):
+            placeholders = ','.join('?' for _ in macs)
+            rows = conn.execute(f'''
+                SELECT mac_address, time_balance, status, download_limit,
+                       upload_limit, plan, upgrade_requested
+                FROM users WHERE mac_address IN ({placeholders})
+            ''', macs).fetchall()
+            out.result = {
+                row['mac_address']: {
+                    key: row[key] for key in row.keys()
+                    if key != 'mac_address'
+                }
+                for row in rows
+            }
+        return out.result
 
     def get_active_users(self):
         """Users with remaining balance - used to reconcile network rules."""
-        conn = self._connect()
-        try:
+        with self._with_conn('Listing active users',
+                             default=[]) as (conn, out):
             rows = conn.execute('''
                 SELECT mac_address, download_limit, upload_limit
                 FROM users WHERE time_balance > 0
             ''').fetchall()
-            return [dict(r) for r in rows]
-        except Exception as e:
-            self.logger.error(f"Error listing active users: {e}")
-            return []
-        finally:
-            conn.close()
+            out.result = [dict(r) for r in rows]
+        return out.result
 
     def request_upgrade(self, mac_address):
-        conn = self._connect()
-        try:
+        with self._with_conn('Requesting upgrade',
+                             default=False) as (conn, out):
             conn.execute('UPDATE users SET upgrade_requested = 1 WHERE mac_address = ?',
                          (mac_address,))
-            conn.commit()
-            return True
-        except Exception as e:
-            self.logger.error(f"Error requesting upgrade: {e}")
-            conn.rollback()
-            return False
-        finally:
-            conn.close()
+            out.result = True
+        return out.result
 
     def get_plans(self):
-        conn = self._connect()
-        try:
-            rows = conn.execute('SELECT name, download_kbps, upload_kbps FROM plans').fetchall()
-            return {r['name']: dict(r) for r in rows}
-        except Exception as e:
-            self.logger.error(f"Error listing plans: {e}")
-            return {}
-        finally:
-            conn.close()
+        with self._with_conn('Listing plans', default={}) as (conn, out):
+            rows = conn.execute(
+                'SELECT name, download_kbps, upload_kbps FROM plans').fetchall()
+            out.result = {r['name']: dict(r) for r in rows}
+        return out.result
 
     def upsert_plan(self, name, download_kbps, upload_kbps):
-        conn = self._connect()
-        try:
+        with self._with_conn(f'Saving plan {name}',
+                             default=False) as (conn, out):
             conn.execute('''
                 INSERT INTO plans (name, download_kbps, upload_kbps) VALUES (?, ?, ?)
                 ON CONFLICT(name) DO UPDATE SET download_kbps = excluded.download_kbps,
@@ -639,14 +606,8 @@ class UserManager:
                 SET download_limit = ?, upload_limit = ?
                 WHERE plan = ?
             ''', (download_kbps, upload_kbps, name))
-            conn.commit()
-            return True
-        except Exception as e:
-            self.logger.error(f"Error saving plan {name}: {e}")
-            conn.rollback()
-            return False
-        finally:
-            conn.close()
+            out.result = True
+        return out.result
 
     def set_plan(self, mac_address, plan_name):
         """Assign a plan; returns (download_kbps, upload_kbps) or None."""
@@ -654,25 +615,18 @@ class UserManager:
         if not plan:
             self.logger.error(f"Unknown plan: {plan_name}")
             return None
-        conn = self._connect()
-        try:
+        with self._with_conn('Setting plan') as (conn, out):
             conn.execute('''
                 UPDATE users
                 SET plan = ?, download_limit = ?, upload_limit = ?, upgrade_requested = 0
                 WHERE mac_address = ?
             ''', (plan_name, plan['download_kbps'], plan['upload_kbps'], mac_address))
-            conn.commit()
-            return plan['download_kbps'], plan['upload_kbps']
-        except Exception as e:
-            self.logger.error(f"Error setting plan: {e}")
-            conn.rollback()
-            return None
-        finally:
-            conn.close()
+            out.result = (plan['download_kbps'], plan['upload_kbps'])
+        return out.result
 
     def set_bandwidth(self, mac_address, download_kbps, upload_kbps):
-        conn = self._connect()
-        try:
+        with self._with_conn('Setting bandwidth',
+                             default=False) as (conn, out):
             conn.execute('''
                 INSERT INTO users (
                     mac_address, time_balance, status,
@@ -683,14 +637,8 @@ class UserManager:
                     upload_limit = excluded.upload_limit,
                     plan = 'custom'
             ''', (mac_address, download_kbps, upload_kbps))
-            conn.commit()
-            return True
-        except Exception as e:
-            self.logger.error(f"Error setting bandwidth: {e}")
-            conn.rollback()
-            return False
-        finally:
-            conn.close()
+            out.result = True
+        return out.result
 
     # --- vouchers -------------------------------------------------------------
 
@@ -747,8 +695,7 @@ class UserManager:
         return None
 
     def get_vouchers(self, include_redeemed=False):
-        conn = self._connect()
-        try:
+        with self._with_conn('Listing vouchers', default=[]) as (conn, out):
             query = ("SELECT code, minutes, "
                      "datetime(created_at, 'localtime') AS created_at, "
                      "redeemed_by, "
@@ -757,18 +704,14 @@ class UserManager:
             if not include_redeemed:
                 query += ' WHERE redeemed_at IS NULL'
             query += ' ORDER BY created_at DESC'
-            return [dict(r) for r in conn.execute(query).fetchall()]
-        except Exception as e:
-            self.logger.error(f"Error listing vouchers: {e}")
-            return []
-        finally:
-            conn.close()
+            out.result = [dict(r) for r in conn.execute(query).fetchall()]
+        return out.result
 
     # --- transactions -----------------------------------------------------------
 
     def get_transactions(self, limit=50):
-        conn = self._connect()
-        try:
+        with self._with_conn('Listing transactions',
+                             default=[]) as (conn, out):
             rows = conn.execute('''
                 SELECT t.amount, t.minutes, t.source,
                        datetime(t.created_at, 'localtime') AS created_at,
@@ -776,16 +719,14 @@ class UserManager:
                 FROM transactions t LEFT JOIN users u ON u.id = t.user_id
                 ORDER BY t.created_at DESC LIMIT ?
             ''', (limit,)).fetchall()
-            return [dict(r) for r in rows]
-        except Exception as e:
-            self.logger.error(f"Error listing transactions: {e}")
-            return []
-        finally:
-            conn.close()
+            out.result = [dict(r) for r in rows]
+        return out.result
 
     def get_revenue_summary(self):
-        conn = self._connect()
-        try:
+        with self._with_conn(
+                'Calculating revenue summary',
+                on_error=lambda: {'day': 0.0, 'week': 0.0, 'month': 0.0},
+        ) as (conn, out):
             row = conn.execute('''
                 SELECT
                     COALESCE(SUM(CASE
@@ -805,16 +746,12 @@ class UserManager:
                 FROM transactions
                 WHERE amount > 0
             ''').fetchone()
-            return {
+            out.result = {
                 'day': float(row['day']),
                 'week': float(row['week']),
                 'month': float(row['month']),
             }
-        except Exception as e:
-            self.logger.error(f"Error calculating revenue summary: {e}")
-            return {'day': 0.0, 'week': 0.0, 'month': 0.0}
-        finally:
-            conn.close()
+        return out.result
 
     # --- session persistence (deduction clock) ----------------------------------
 

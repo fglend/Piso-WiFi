@@ -61,8 +61,12 @@ if __name__ == '__main__':
             manage_hardware=settings.manage_hardware,
             settings=settings,
         )
+        # Dev fallback only - production runs gunicorn via wsgi.py (see
+        # install_ubuntu.sh). threaded=True keeps the portal responsive
+        # while an admin page renders.
         app.run(host=settings.host, port=settings.port,
-                debug=not settings.is_production, use_reloader=False)
+                debug=not settings.is_production, use_reloader=False,
+                threaded=True)
     except Exception as e:
         logger.error(f"Fatal error: {e}")
         raise

@@ -52,9 +52,10 @@ def _dashboard_devices(svc):
     default_download = svc.settings.default_download_kbps
     default_upload = svc.settings.default_upload_kbps
     devices = svc.network_controller.get_connected_devices()
+    info_by_mac = svc.user_manager.get_devices_info(
+        [device['mac_address'] for device in devices])
     for device in devices:
-        mac = device['mac_address']
-        info = svc.user_manager.get_device_info(mac)
+        info = info_by_mac.get(device['mac_address'])
         if info:
             device.update(info)
         else:

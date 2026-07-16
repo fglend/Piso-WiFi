@@ -8,7 +8,7 @@ from network.firewall import Firewall
 from network.qos import QoSManager
 from network.wired import WiredGateway
 from network_controller import NetworkController
-from tests.conftest import MAC
+from tests.conftest import MAC, OTHER_MAC
 
 POE_AP_MAC = "AA:BB:CC:DD:EE:01"
 POE_AP_IP = "192.168.4.2"
@@ -512,3 +512,62 @@ def test_mac_change_flushes_stale_state_for_reused_ip(network_controller):
 
     flushed = [call.args[0] for call in flush.call_args_list]
     assert '192.168.4.20' in flushed
+
+
+def test_get_stations_parses_signal_from_single_dump(settings):
+    """Signal comes from the one `station dump` call - no per-station subprocess."""
+    manager = APManager(settings)
+    dump = (
+        "Station 00:11:22:33:44:55 (on wlan0)\n"
+        "\tinactive time:\t10 ms\n"
+        "\tsignal:  \t-55 [-58, -60] dBm\n"
+        "\tsignal avg:\t-56 dBm\n"
+        "Station 11:22:33:44:55:66 (on wlan0)\n"
+        "\tsignal:  \t-71 dBm\n"
+    )
+    with patch.object(manager, 'get_dhcp_leases', return_value={}), \
+            patch('network.ap_manager.run_cmd',
+                  return_value=dump) as run_cmd:
+        stations = manager.get_stations()
+
+    assert run_cmd.call_count == 1
+    assert [s['mac_address'] for s in stations] == [MAC, '11:22:33:44:55:66']
+    assert stations[0]['signal'] == '-55 dBm'
+    assert stations[1]['signal'] == '-71 dBm'
+
+
+def test_get_devices_info_batches_macs(user_manager):
+    user_manager.add_time(MAC, 5, 30)
+    infos = user_manager.get_devices_info([MAC.lower(), OTHER_MAC])
+    assert infos[MAC]['time_balance'] == 30
+    assert OTHER_MAC not in infos
+    assert user_manager.get_devices_info([]) == {}
+
+
+def test_lookup_cache_is_invalidated_by_flush(settings):
+    """Cached identity lookups must not survive a MAC-change flush."""
+    nc = NetworkController(settings, manage_hardware=False)
+    old_neigh = '192.168.4.20 dev wlan0 lladdr aa:aa:aa:aa:aa:01 REACHABLE'
+    new_neigh = '192.168.4.20 dev wlan0 lladdr bb:bb:bb:bb:bb:02 REACHABLE'
+    with patch.object(nc.ap, 'get_dhcp_leases', return_value={}):
+        with patch('network.ap_manager.run_cmd', return_value=old_neigh):
+            assert nc.resolve_mac('192.168.4.20') == 'AA:AA:AA:AA:AA:01'
+        with patch('network.ap_manager.run_cmd', return_value=new_neigh):
+            # Within the TTL the cached (old) answer is served...
+            assert nc.resolve_mac('192.168.4.20') == 'AA:AA:AA:AA:AA:01'
+            # ...until a device-change flush invalidates it.
+            with patch.object(nc.firewall, 'flush_device_state'):
+                nc._flush_stale_state('192.168.4.20')
+            assert nc.resolve_mac('192.168.4.20') == 'BB:BB:BB:BB:BB:02'
+
+
+def test_wired_write_configs_reuses_shared_dnsmasq_template(settings, tmp_path):
+    gateway = WiredGateway(settings)
+    gateway.dnsmasq_conf = str(tmp_path / 'dnsmasq.conf')
+    gateway.write_configs()
+    config = (tmp_path / 'dnsmasq.conf').read_text()
+    assert 'dhcp-authoritative' in config
+    directives = {line.strip() for line in config.splitlines()
+                  if not line.strip().startswith('#')}
+    assert 'log-queries' not in directives
+    assert 'log-dhcp' in directives

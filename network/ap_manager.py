@@ -11,6 +11,11 @@ logger = logging.getLogger(__name__)
 
 MAC_RE = re.compile(r'^([0-9A-F]{2}:){5}[0-9A-F]{2}$')
 DNSMASQ_LEASES = '/var/lib/misc/dnsmasq.leases'
+# Every portal request resolves the client's identity; without a small cache
+# that is a leases-file read plus an `ip neigh` subprocess per request. Kept
+# tiny (and explicitly invalidated on device change) so a MAC-randomization
+# toggle is never served a stale identity.
+LOOKUP_CACHE_TTL = 2.0
 
 
 def is_valid_mac(mac):
@@ -30,6 +35,23 @@ class APManager:
         self.hostapd_conf = '/etc/hostapd/hostapd.conf'
         self.dnsmasq_conf = '/etc/dnsmasq.conf'
         self.logger = logger
+        self._lease_cache = (0.0, {})
+        self._neigh_cache = (0.0, None)
+
+    def invalidate_caches(self):
+        """Drop cached lookups (called when a device joins/leaves/changes MAC)."""
+        self._lease_cache = (0.0, {})
+        self._neigh_cache = (0.0, None)
+
+    def _read_neighbors(self):
+        """`ip neigh` output lines, cached for LOOKUP_CACHE_TTL seconds."""
+        cached_at, lines = self._neigh_cache
+        now = time.monotonic()
+        if lines is not None and now - cached_at < LOOKUP_CACHE_TTL:
+            return lines
+        lines = run_cmd(['ip', 'neigh']).splitlines()
+        self._neigh_cache = (now, lines)
+        return lines
 
     def verify_requirements(self):
         if os.geteuid() != 0:
@@ -66,11 +88,12 @@ wmm_enabled=0
 auth_algs=1
 ignore_broadcast_ssid=0
 
-# Debugging
+# Logging: notifications and up only. Verbose levels write to syslog on
+# the SD card constantly, which wears the card and steals I/O on the Pi.
 logger_syslog=-1
-logger_syslog_level=2
+logger_syslog_level=3
 logger_stdout=-1
-logger_stdout_level=2
+logger_stdout_level=3
 
 # Stability settings
 beacon_int=100
@@ -83,8 +106,13 @@ fragm_threshold=2346
             f.write(hostapd_config.strip())
         os.chmod(self.hostapd_conf, 0o644)
 
+        self._write_dnsmasq_conf()
+        self.logger.info("AP configuration written")
+
+    def _dnsmasq_config(self):
+        """Single source of truth for DHCP/DNS options (wired mode reuses it)."""
         s = self.settings
-        dnsmasq_config = f"""
+        return f"""
 # Interface configuration
 interface={self.ap_interface}
 no-dhcp-interface=lo
@@ -109,14 +137,15 @@ host-record={s.portal_hostname},{self.ip}
 server=8.8.8.8
 server=8.8.4.4
 
-# Logging
-log-queries
+# Logging: DHCP events only. log-queries would write every DNS lookup from
+# every phone to syslog on the SD card.
 log-dhcp
 """
+
+    def _write_dnsmasq_conf(self):
         with open(self.dnsmasq_conf, 'w') as f:
-            f.write(dnsmasq_config.strip())
+            f.write(self._dnsmasq_config().strip())
         os.chmod(self.dnsmasq_conf, 0o644)
-        self.logger.info("AP configuration written")
 
     def start(self):
         run_cmd(['killall', 'hostapd'], ignore_errors=True)
@@ -193,7 +222,15 @@ log-dhcp
             return False
 
     def get_dhcp_leases(self, strict=False):
-        """Return {MAC: {'ip', 'hostname', 'lease_expiry'}} for active leases."""
+        """Return {MAC: {'ip', 'hostname', 'lease_expiry'}} for active leases.
+
+        Non-strict reads are cached briefly; strict callers always re-read so
+        their error semantics (raise on unreadable file) are preserved.
+        """
+        if not strict:
+            cached_at, cached = self._lease_cache
+            if cached and time.monotonic() - cached_at < LOOKUP_CACHE_TTL:
+                return cached
         leases = {}
         try:
             if not os.path.exists(DNSMASQ_LEASES):
@@ -217,6 +254,8 @@ log-dhcp
             self.logger.warning(f"DHCP leases check failed: {e}")
             if strict:
                 raise RuntimeError("Could not read DHCP leases") from e
+            return leases
+        self._lease_cache = (time.monotonic(), leases)
         return leases
 
     def get_stations(self):
@@ -225,27 +264,28 @@ log-dhcp
         stations = []
         dhcp_info = self.get_dhcp_leases()
         try:
+            # A single `station dump` already contains each station's signal
+            # line; spawning `station get <MAC>` per client is an avoidable
+            # subprocess storm on the Pi's Cortex-A7.
             result = run_cmd(['iw', 'dev', self.ap_interface, 'station', 'dump'])
+            current = None
             for line in result.split('\n'):
                 if 'Station' in line:
+                    current = None
                     mac = line.split()[1].upper()
                     if not is_valid_mac(mac):
                         continue
-                    info = {
+                    current = {
                         'mac_address': mac,
                         'ip': dhcp_info.get(mac, {}).get('ip', 'Unknown'),
                         'hostname': dhcp_info.get(mac, {}).get('hostname', 'Unknown'),
                         'connected': True,
                     }
-                    try:
-                        detail = run_cmd(['iw', 'dev', self.ap_interface,
-                                          'station', 'get', mac])
-                        signal = re.search(r"signal:\s*([-\d]+)\s*dBm", detail)
-                        if signal:
-                            info['signal'] = f"{signal.group(1)} dBm"
-                    except Exception as e:
-                        self.logger.debug(f"Could not get signal info for {mac}: {e}")
-                    stations.append(info)
+                    stations.append(current)
+                elif current is not None and 'signal' not in current:
+                    signal = re.search(r"signal:\s*([-\d]+)", line)
+                    if signal:
+                        current['signal'] = f"{signal.group(1)} dBm"
         except Exception as e:
             self.logger.warning(f"IW station dump failed: {e}")
             raise
@@ -259,8 +299,7 @@ log-dhcp
         MAC until it expires, which would misidentify the device.
         """
         try:
-            output = run_cmd(['ip', 'neigh'])
-            for line in output.splitlines():
+            for line in self._read_neighbors():
                 parts = line.split()
                 if (parts and parts[0] == ip_address and 'lladdr' in parts
                         and 'FAILED' not in parts):
@@ -278,8 +317,7 @@ log-dhcp
         if lease:
             return lease['ip']
         try:
-            output = run_cmd(['ip', 'neigh'])
-            for line in output.splitlines():
+            for line in self._read_neighbors():
                 if mac_address.lower() in line.lower():
                     return line.split()[0]
         except Exception as e:
