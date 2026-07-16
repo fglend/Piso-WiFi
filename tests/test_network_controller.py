@@ -430,3 +430,85 @@ def test_firewall_sync_keeps_protected_poe_ap_allowed():
     assert any(all(value in command for value in
                    (POE_AP_MAC, POE_AP_IP, 'RETURN'))
                for command in commands)
+
+
+def test_dhcp_config_is_authoritative_with_short_leases(settings, tmp_path):
+    """MAC-randomization toggles must re-DHCP in seconds, not minutes."""
+    for backend in (APManager, WiredGateway):
+        manager = backend(settings)
+        manager.hostapd_conf = str(tmp_path / 'hostapd.conf')
+        manager.dnsmasq_conf = str(tmp_path / 'dnsmasq.conf')
+        with patch('network.ap_manager.os.makedirs'):
+            manager.write_configs()
+        config = (tmp_path / 'dnsmasq.conf').read_text()
+        assert 'dhcp-authoritative' in config
+        assert 'dhcp-rapid-commit' in config
+        assert ',2h' in config
+        assert ',24h' not in config
+
+
+def test_resolve_mac_prefers_live_neighbor_over_stale_lease(settings):
+    """A stale lease from a discarded random MAC must not shadow the
+    device's current MAC in the kernel neighbor table."""
+    manager = APManager(settings)
+    stale = {'AA:AA:AA:AA:AA:01': {'ip': '192.168.4.20',
+                                   'hostname': 'old-random-id',
+                                   'lease_expiry': 9999999999}}
+    neigh = '192.168.4.20 dev wlan0 lladdr bb:bb:bb:bb:bb:02 REACHABLE\n'
+    with patch.object(manager, 'get_dhcp_leases', return_value=stale), \
+            patch('network.ap_manager.run_cmd', return_value=neigh):
+        assert manager.resolve_mac('192.168.4.20') == 'BB:BB:BB:BB:BB:02'
+
+
+def test_resolve_mac_falls_back_to_lease_without_neighbor_entry(settings):
+    manager = APManager(settings)
+    lease = {'AA:AA:AA:AA:AA:01': {'ip': '192.168.4.20',
+                                   'hostname': 'phone',
+                                   'lease_expiry': 9999999999}}
+    with patch.object(manager, 'get_dhcp_leases', return_value=lease), \
+            patch('network.ap_manager.run_cmd', return_value=''):
+        assert manager.resolve_mac('192.168.4.20') == 'AA:AA:AA:AA:AA:01'
+
+
+def test_flush_device_state_clears_neighbor_and_conntrack():
+    firewall = Firewall('wlan0', 'eth0', '192.168.4.1')
+
+    with patch('network.firewall.run_cmd') as run_cmd, \
+            patch('network.firewall.command_exists', return_value=True):
+        firewall.flush_device_state('192.168.4.20')
+
+    commands = [call.args[0] for call in run_cmd.call_args_list]
+    assert ['ip', 'neigh', 'flush', 'dev', 'wlan0',
+            'to', '192.168.4.20'] in commands
+    assert ['conntrack', '-D', '-s', '192.168.4.20'] in commands
+    assert ['conntrack', '-D', '-d', '192.168.4.20'] in commands
+
+
+def test_flush_device_state_survives_missing_conntrack():
+    firewall = Firewall('wlan0', 'eth0', '192.168.4.1')
+
+    with patch('network.firewall.run_cmd',
+               side_effect=FileNotFoundError('ip')), \
+            patch('network.firewall.command_exists', return_value=False):
+        firewall.flush_device_state('192.168.4.20')  # must not raise
+
+
+def test_mac_change_flushes_stale_state_for_reused_ip(network_controller):
+    """New MAC appearing on a known IP (randomization toggled off) triggers
+    a neighbor/conntrack flush so the portal is reachable immediately."""
+    network_controller.on_new_device = lambda mac: None
+    old = {'mac_address': MAC, 'ip': '192.168.4.20',
+           'hostname': 'phone', 'connected': True}
+    new = {'mac_address': 'BB:BB:BB:BB:BB:02', 'ip': '192.168.4.20',
+           'hostname': 'phone', 'connected': True}
+
+    with patch.object(network_controller.firewall,
+                      'flush_device_state') as flush, \
+            patch.object(network_controller.ap, 'get_stations',
+                         side_effect=[[old], [new], [new]]):
+        network_controller.get_connected_devices()
+        network_controller.get_connected_devices()
+        network_controller.get_connected_devices()
+
+    flushed = [call.args[0] for call in flush.call_args_list]
+    assert '192.168.4.20' in flushed

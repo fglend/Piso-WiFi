@@ -9,7 +9,7 @@ import logging
 from functools import wraps
 from threading import RLock
 
-from network.command import run_cmd
+from network.command import command_exists, run_cmd
 
 CHAIN = 'PISOWIFI'
 CAPTIVE_CHAIN = 'PISOWIFI_PORTAL'
@@ -220,6 +220,29 @@ class Firewall:
         except Exception as e:
             self.logger.error(f"Error blocking MAC {mac_address}: {e}")
             return False
+
+    @_synchronized
+    def flush_device_state(self, ip_address):
+        """Drop kernel state bound to an IP after its owner changes or leaves.
+
+        Phones that toggle MAC randomization reconnect with a new MAC but
+        often reclaim their previous IP; a stale neighbor entry or conntrack
+        flow bound to the dead MAC would blackhole them until it times out.
+        Best-effort: never raises (conntrack may not be installed).
+        """
+        try:
+            run_cmd(['ip', 'neigh', 'flush', 'dev', self.ap_interface,
+                     'to', ip_address], ignore_errors=True)
+            if command_exists('conntrack'):
+                run_cmd(['conntrack', '-D', '-s', ip_address],
+                        ignore_errors=True)
+                run_cmd(['conntrack', '-D', '-d', ip_address],
+                        ignore_errors=True)
+            self.logger.info("Flushed neighbor/conntrack state for %s",
+                             ip_address)
+        except Exception as e:
+            self.logger.warning(
+                "Could not flush device state for %s: %s", ip_address, e)
 
     @_synchronized
     def sync(self, allowed_macs):

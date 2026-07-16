@@ -91,7 +91,13 @@ no-dhcp-interface=lo
 bind-interfaces
 
 # DHCP server configuration
-dhcp-range={s.dhcp_range_start},{s.dhcp_range_end},{s.network_mask},24h
+# authoritative: NAK unknown-lease requests immediately so phones that switch
+# between random and device MAC re-DHCP in seconds instead of backing off for
+# minutes. Short leases let abandoned random-MAC leases expire quickly; paid
+# time is tracked by MAC in SQLite, so lease length does not affect balances.
+dhcp-authoritative
+dhcp-rapid-commit
+dhcp-range={s.dhcp_range_start},{s.dhcp_range_end},{s.network_mask},2h
 dhcp-option=option:router,{self.ip}
 dhcp-option=option:dns-server,{self.ip}
 dhcp-option=option:netmask,{s.network_mask}
@@ -246,18 +252,24 @@ log-dhcp
         return stations
 
     def resolve_mac(self, ip_address):
-        """Find the MAC currently holding an IP (DHCP leases, then neighbors)."""
-        for mac, lease in self.get_dhcp_leases().items():
-            if lease['ip'] == ip_address:
-                return mac
+        """Find the MAC currently holding an IP (neighbors, then DHCP leases).
+
+        The kernel neighbor table reflects who owns the IP right now; the
+        leases file can hold a stale entry for a previous (e.g. randomized)
+        MAC until it expires, which would misidentify the device.
+        """
         try:
             output = run_cmd(['ip', 'neigh'])
             for line in output.splitlines():
                 parts = line.split()
-                if parts and parts[0] == ip_address and 'lladdr' in parts:
+                if (parts and parts[0] == ip_address and 'lladdr' in parts
+                        and 'FAILED' not in parts):
                     return parts[parts.index('lladdr') + 1].upper()
         except Exception as e:
             self.logger.debug(f"Neighbor lookup failed for {ip_address}: {e}")
+        for mac, lease in self.get_dhcp_leases().items():
+            if lease['ip'] == ip_address:
+                return mac
         return None
 
     def resolve_ip(self, mac_address):

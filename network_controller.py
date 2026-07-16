@@ -97,8 +97,18 @@ class NetworkController:
         with self._discovery_lock:
             return self._get_connected_devices()
 
+    def _flush_stale_state(self, ip_address):
+        """Clear neighbor/conntrack entries for an IP whose owner changed."""
+        if not ip_address or ip_address == 'Unknown':
+            return
+        try:
+            self.firewall.flush_device_state(ip_address)
+        except Exception as e:
+            self.logger.error(f"State flush failed for {ip_address}: {e}")
+
     def _get_connected_devices(self):
         try:
+            prior_devices = dict(self._known_devices)
             # Work with copies so station data owned by a backend is never
             # mutated. MACs are canonicalized for case-insensitive matching.
             devices = [
@@ -139,12 +149,18 @@ class NetworkController:
 
             for mac in new_devices:
                 self.logger.info(f"New device connected: {mac}")
+                # A new MAC may be a phone that toggled MAC randomization and
+                # reclaimed the IP its old identity held; drop stale kernel
+                # state so it is reachable immediately.
+                self._flush_stale_state(
+                    observed_by_mac.get(mac, {}).get('ip'))
                 try:
                     self.on_new_device(mac)
                 except Exception as e:
                     self.logger.error(f"on_new_device handler failed for {mac}: {e}")
             for mac in disconnected:
                 self.logger.info(f"Device disconnected: {mac}")
+                self._flush_stale_state(prior_devices.get(mac, {}).get('ip'))
 
             # Persist the authoritative observed snapshot. The effective list
             # returned to callers has a one-poll UI/metering debounce, while

@@ -37,7 +37,12 @@ no-dhcp-interface=lo
 bind-interfaces
 
 # DHCP server configuration
-dhcp-range={s.dhcp_range_start},{s.dhcp_range_end},{s.network_mask},24h
+# authoritative: NAK unknown-lease requests immediately so phones that switch
+# between random and device MAC re-DHCP in seconds instead of backing off for
+# minutes. Short leases let abandoned random-MAC leases expire quickly.
+dhcp-authoritative
+dhcp-rapid-commit
+dhcp-range={s.dhcp_range_start},{s.dhcp_range_end},{s.network_mask},2h
 dhcp-option=option:router,{self.ip}
 dhcp-option=option:dns-server,{self.ip}
 dhcp-option=option:netmask,{s.network_mask}

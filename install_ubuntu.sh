@@ -28,6 +28,7 @@ apt-get install -y \
     net-tools \
     wireless-tools \
     sqlite3 \
+    conntrack \
     rfkill \
     build-essential \
     pkg-config \
