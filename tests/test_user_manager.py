@@ -183,3 +183,25 @@ def test_update_post_description_changes_only_selected_post(user_manager):
     cleared = {post['title']: post for post in user_manager.get_posts()}
     assert cleared['First']['description'] == ''
     assert user_manager.update_post_description(999_999, 'Missing') is False
+
+
+def test_paid_voucher_records_revenue_at_creation(user_manager):
+    before = user_manager.get_revenue_summary()['day']
+    code = user_manager.create_voucher(150, price=10)
+    assert code is not None
+    assert user_manager.get_revenue_summary()['day'] == before + 10
+    # Redemption grants the minutes but never double-counts the sale
+    assert user_manager.redeem_voucher(code, "00:11:22:33:44:55") == 150
+    assert user_manager.get_revenue_summary()['day'] == before + 10
+    voucher = user_manager.get_vouchers(include_redeemed=True)[0]
+    assert voucher['price'] == 10
+
+
+def test_free_voucher_records_no_revenue(user_manager):
+    before = user_manager.get_revenue_summary()['day']
+    code = user_manager.create_voucher(30)
+    assert code is not None
+    user_manager.redeem_voucher(code, "00:11:22:33:44:55")
+    assert user_manager.get_revenue_summary()['day'] == before
+    voucher = user_manager.get_vouchers(include_redeemed=True)[0]
+    assert not voucher['price']

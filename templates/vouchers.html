@@ -16,12 +16,24 @@
     <div class="card-body">
         <form action="{{ url_for('admin.vouchers') }}" method="POST" class="form-row">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="mode" value="minutes">
             <div style="max-width: 200px;">
-                <label for="voucher-minutes">Minutes</label>
+                <label for="voucher-minutes">Free voucher (minutes)</label>
                 <input type="number" id="voucher-minutes" name="minutes" min="1" step="any" placeholder="e.g. 30" required>
             </div>
-            <button type="submit" class="btn btn-primary">Create Voucher</button>
+            <button type="submit" class="btn btn-primary">Create Free Voucher</button>
         </form>
+        <form action="{{ url_for('admin.vouchers') }}" method="POST" class="form-row mt-2">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="mode" value="price">
+            <div style="max-width: 200px;">
+                <label for="voucher-price">Paid voucher (price ₱)</label>
+                <input type="number" id="voucher-price" name="price" min="1" step="1" placeholder="e.g. 10" required>
+            </div>
+            <button type="submit" class="btn btn-primary">Create Paid Voucher</button>
+        </form>
+        <p class="muted small mb-0">Paid vouchers convert pesos to minutes with the
+            rate table and are recorded as revenue when created; free vouchers are not.</p>
     </div>
 </div>
 
@@ -32,6 +44,7 @@
                 <tr>
                     <th>Code</th>
                     <th>Minutes</th>
+                    <th>Price</th>
                     <th>Created</th>
                     <th>Redeemed By</th>
                     <th>Redeemed At</th>
@@ -42,12 +55,13 @@
                 <tr>
                     <td><code>{{ v.code }}</code></td>
                     <td>{{ '%g'|format(v.minutes) }}</td>
+                    <td>{% if v.price %}₱{{ '%g'|format(v.price) }}{% else %}Free{% endif %}</td>
                     <td>{{ v.created_at }}</td>
                     <td class="text-break">{{ v.redeemed_by or '-' }}</td>
                     <td>{{ v.redeemed_at or '-' }}</td>
                 </tr>
                 {% else %}
-                <tr><td colspan="5" class="text-center muted">No vouchers</td></tr>
+                <tr><td colspan="6" class="text-center muted">No vouchers</td></tr>
                 {% endfor %}
             </tbody>
         </table>

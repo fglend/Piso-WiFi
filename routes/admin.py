@@ -447,6 +447,24 @@ def delete_rate():
 def vouchers():
     svc = _services()
     if request.method == 'POST':
+        if request.form.get('mode') == 'price':
+            price = _form_number('price', minimum=1)
+            if price is None:
+                flash('Please enter a valid price in pesos', 'error')
+                return redirect(url_for('admin.vouchers'))
+            svc.refresh_runtime_settings()
+            minutes = compute_minutes(price, svc.user_manager.get_rates(),
+                                      svc.settings.minutes_per_peso)
+            if minutes <= 0:
+                flash('That price converts to 0 minutes - check the rate table', 'error')
+                return redirect(url_for('admin.vouchers'))
+            code = svc.user_manager.create_voucher(minutes, price=price)
+            if code:
+                flash(f'Paid voucher created: {code} '
+                      f'(₱{price:g} = {minutes:g} minutes)', 'success')
+            else:
+                flash('Error creating voucher', 'error')
+            return redirect(url_for('admin.vouchers'))
         minutes = _form_number('minutes', minimum=1, cast=float)
         if minutes is None:
             flash('Please enter a valid number of minutes', 'error')

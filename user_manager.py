@@ -124,6 +124,7 @@ class UserManager:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     code TEXT UNIQUE NOT NULL,
                     minutes REAL NOT NULL,
+                    price REAL DEFAULT 0,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     redeemed_by TEXT,
                     redeemed_at TIMESTAMP
@@ -195,6 +196,7 @@ class UserManager:
 
             # Additive column migrations for databases created by older versions
             self._add_column_if_missing(c, 'transactions', 'source', "TEXT DEFAULT 'cash'")
+            self._add_column_if_missing(c, 'vouchers', 'price', 'REAL DEFAULT 0')
             self._add_column_if_missing(
                 c, 'device_connections', 'missed_polls',
                 'INTEGER NOT NULL DEFAULT 0')
@@ -642,8 +644,14 @@ class UserManager:
 
     # --- vouchers -------------------------------------------------------------
 
-    def create_voucher(self, minutes):
-        """Create a voucher worth the given minutes; returns the code."""
+    def create_voucher(self, minutes, price=0):
+        """Create a voucher worth the given minutes; returns the code.
+
+        price > 0 marks a paid voucher: the sale is recorded as revenue at
+        creation time (cash changed hands when the voucher was sold), in the
+        same transaction as the voucher insert. Redemption stays amount=0 so
+        the sale is never double-counted.
+        """
         alphabet = string.ascii_uppercase + string.digits
         conn = self._connect()
         try:
@@ -651,12 +659,24 @@ class UserManager:
                 code = '-'.join(
                     ''.join(secrets.choice(alphabet) for _ in range(4)) for _ in range(2))
                 try:
-                    conn.execute('INSERT INTO vouchers (code, minutes) VALUES (?, ?)',
-                                 (code, minutes))
+                    conn.execute(
+                        'INSERT INTO vouchers (code, minutes, price) '
+                        'VALUES (?, ?, ?)',
+                        (code, minutes, price))
+                    if price > 0:
+                        conn.execute('''
+                            INSERT INTO transactions
+                                (user_id, amount, minutes, source)
+                            VALUES (NULL, ?, ?, 'voucher')
+                        ''', (price, minutes))
                     conn.commit()
-                    self.logger.info(f"Created voucher {code} worth {minutes} minutes")
+                    self.logger.info(
+                        f"Created voucher {code} worth {minutes} minutes"
+                        f" (price ₱{price:g})" if price else
+                        f"Created voucher {code} worth {minutes} minutes")
                     return code
                 except sqlite3.IntegrityError:
+                    conn.rollback()
                     continue
             self.logger.error("Could not generate a unique voucher code")
             return None
@@ -696,7 +716,7 @@ class UserManager:
 
     def get_vouchers(self, include_redeemed=False):
         with self._with_conn('Listing vouchers', default=[]) as (conn, out):
-            query = ("SELECT code, minutes, "
+            query = ("SELECT code, minutes, price, "
                      "datetime(created_at, 'localtime') AS created_at, "
                      "redeemed_by, "
                      "datetime(redeemed_at, 'localtime') AS redeemed_at "

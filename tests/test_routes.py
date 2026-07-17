@@ -372,3 +372,22 @@ def test_post_upload_rejects_spoofed_image_extension(
 def test_responses_disable_content_type_sniffing(client, app):
     assert app.config['MAX_CONTENT_LENGTH'] == 5 * 1024 * 1024
     assert client.get('/').headers['X-Content-Type-Options'] == 'nosniff'
+
+
+def test_create_paid_voucher_records_revenue(admin_client, csrf_token, services):
+    resp = post(admin_client, '/vouchers', csrf_token, mode='price', price=5)
+    assert resp.status_code == 302
+    vouchers = services.user_manager.get_vouchers()
+    assert len(vouchers) == 1
+    assert vouchers[0]['price'] == 5
+    assert vouchers[0]['minutes'] > 0
+    assert services.user_manager.get_revenue_summary()['day'] == 5
+
+
+def test_create_free_voucher_records_no_revenue(admin_client, csrf_token, services):
+    resp = post(admin_client, '/vouchers', csrf_token, mode='minutes', minutes=30)
+    assert resp.status_code == 302
+    vouchers = services.user_manager.get_vouchers()
+    assert len(vouchers) == 1
+    assert not vouchers[0]['price']
+    assert services.user_manager.get_revenue_summary()['day'] == 0
