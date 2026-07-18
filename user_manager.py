@@ -580,6 +580,28 @@ class UserManager:
             out.result = [dict(r) for r in rows]
         return out.result
 
+    def get_users_with_balance(self):
+        """Devices with remaining time, enriched with their latest connection
+        record (hostname / last IP / last seen), highest balance first."""
+        with self._with_conn('Listing users with balance',
+                             default=[]) as (conn, out):
+            rows = conn.execute('''
+                SELECT u.mac_address, u.time_balance, u.plan,
+                       dc.hostname, dc.ip_address,
+                       datetime(dc.last_seen_at, 'localtime') AS last_seen_at
+                FROM users u
+                LEFT JOIN device_connections dc ON dc.id = (
+                    SELECT id FROM device_connections
+                    WHERE mac_address = u.mac_address
+                    ORDER BY last_seen_at DESC, id DESC
+                    LIMIT 1
+                )
+                WHERE u.time_balance > 0
+                ORDER BY u.time_balance DESC
+            ''').fetchall()
+            out.result = [dict(r) for r in rows]
+        return out.result
+
     def request_upgrade(self, mac_address):
         with self._with_conn('Requesting upgrade',
                              default=False) as (conn, out):

@@ -95,10 +95,14 @@ def dashboard():
         plans = svc.user_manager.get_plans()
         revenue = svc.user_manager.get_revenue_summary()
         disconnected_devices = svc.user_manager.get_disconnected_devices()
+        # Not part of the live-refresh signature: balances tick every minute
+        # and would otherwise reload the dashboard constantly.
+        balance_devices = svc.user_manager.get_users_with_balance()
         device_state_signature = _device_state_signature(
             devices, disconnected_devices)
         return render_template('admin.html', devices=devices,
                                disconnected_devices=disconnected_devices,
+                               balance_devices=balance_devices,
                                device_state_signature=device_state_signature,
                                plans=plans,
                                minutes_per_peso=svc.settings.minutes_per_peso,

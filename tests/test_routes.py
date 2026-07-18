@@ -391,3 +391,12 @@ def test_create_free_voucher_records_no_revenue(admin_client, csrf_token, servic
     assert len(vouchers) == 1
     assert not vouchers[0]['price']
     assert services.user_manager.get_revenue_summary()['day'] == 0
+
+
+def test_dashboard_shows_devices_with_balance(admin_client, csrf_token, services):
+    services.user_manager.add_time(MAC, 5, 60)
+    resp = admin_client.get('/admin')
+    assert resp.status_code == 200
+    page = resp.get_data(as_text=True)
+    assert 'With Balance' in page
+    assert MAC in page

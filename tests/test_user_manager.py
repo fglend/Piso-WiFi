@@ -205,3 +205,20 @@ def test_free_voucher_records_no_revenue(user_manager):
     assert user_manager.get_revenue_summary()['day'] == before
     voucher = user_manager.get_vouchers(include_redeemed=True)[0]
     assert not voucher['price']
+
+
+def test_get_users_with_balance_includes_last_connection(user_manager):
+    user_manager.add_time(MAC, 5, 60)
+    user_manager.add_time(OTHER_MAC, 1, 10)
+    user_manager.deduct_time(OTHER_MAC, 10)
+    user_manager.sync_connection_snapshot([
+        {'mac_address': MAC, 'hostname': 'phone', 'ip': '192.168.4.10'},
+    ])
+
+    users = user_manager.get_users_with_balance()
+
+    assert [u['mac_address'] for u in users] == [MAC]
+    assert users[0]['time_balance'] == 60
+    assert users[0]['hostname'] == 'phone'
+    assert users[0]['ip_address'] == '192.168.4.10'
+    assert users[0]['last_seen_at'] is not None

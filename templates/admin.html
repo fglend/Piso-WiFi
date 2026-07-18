@@ -63,6 +63,13 @@
             Disconnected
             <span class="badge badge-muted" id="disconnected-tab-count">{{ disconnected_devices|length }}</span>
         </button>
+        <button type="button" class="device-tab" role="tab"
+                id="balance-tab" aria-selected="false"
+                aria-controls="balance-panel" data-device-tab="balance-panel"
+                tabindex="-1">
+            With Balance
+            <span class="badge badge-muted" id="balance-tab-count">{{ balance_devices|length }}</span>
+        </button>
     </div>
     <div class="table-wrap device-tab-panel" id="connected-panel"
          role="tabpanel" aria-labelledby="connected-tab">
@@ -150,8 +157,8 @@
                     <th>MAC Address</th>
                     <th>Hostname</th>
                     <th>Last IP Address</th>
-                    <th>Connected At (UTC)</th>
-                    <th>Disconnected At (UTC)</th>
+                    <th>Connected At</th>
+                    <th>Disconnected At</th>
                 </tr>
             </thead>
             <tbody>
@@ -167,6 +174,46 @@
                 <tr>
                     <td colspan="5" class="text-center muted">
                         No disconnected devices in the last 30 days
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    <div class="table-wrap device-tab-panel" id="balance-panel"
+         role="tabpanel" aria-labelledby="balance-tab" hidden>
+        {% set connected_macs = devices | map(attribute='mac_address') | list %}
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>MAC Address</th>
+                    <th>Hostname</th>
+                    <th>Last IP Address</th>
+                    <th>Remaining (min)</th>
+                    <th>Status</th>
+                    <th>Last Seen</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for device in balance_devices %}
+                <tr>
+                    <td class="text-break">{{ device.mac_address }}</td>
+                    <td>{{ device.hostname or 'Unknown' }}</td>
+                    <td>{{ device.ip_address or 'Unknown' }}</td>
+                    <td>{{ '%g'|format(device.time_balance) }}</td>
+                    <td>
+                        {% if device.mac_address in connected_macs %}
+                        <span class="badge badge-info">Connected</span>
+                        {% else %}
+                        <span class="badge badge-muted">Offline</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ device.last_seen_at or '-' }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="6" class="text-center muted">
+                        No devices with remaining time
                     </td>
                 </tr>
                 {% endfor %}
