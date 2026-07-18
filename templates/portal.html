@@ -22,10 +22,21 @@
     </div>
     {% if posts|length > 1 %}
     <div class="carousel-controls">
-        <button type="button" class="btn btn-ghost btn-sm" data-carousel-previous aria-label="Previous announcement">Previous</button>
-        <span class="muted small" data-carousel-position>1 / {{ posts|length }}</span>
-        <button type="button" class="btn btn-ghost btn-sm" data-carousel-next aria-label="Next announcement">Next</button>
-        <button type="button" class="btn btn-ghost btn-sm" data-carousel-toggle aria-pressed="false">Pause</button>
+        <button type="button" class="carousel-arrow" data-carousel-previous
+                aria-label="Previous announcement">&lsaquo;</button>
+        <div class="carousel-dots" data-carousel-dots>
+            {% for post in posts %}
+            <button type="button"
+                    class="carousel-dot{% if loop.first %} active{% endif %}"
+                    data-carousel-dot="{{ loop.index0 }}"
+                    aria-label="Go to announcement {{ loop.index }}"></button>
+            {% endfor %}
+        </div>
+        <button type="button" class="carousel-arrow" data-carousel-next
+                aria-label="Next announcement">&rsaquo;</button>
+        <span class="visually-hidden" aria-live="polite" data-carousel-position>1 / {{ posts|length }}</span>
+        <button type="button" class="btn btn-ghost btn-sm carousel-toggle"
+                data-carousel-toggle aria-pressed="false">Pause</button>
     </div>
     {% endif %}
 </section>
@@ -336,6 +347,8 @@
         carousel.querySelectorAll('[data-carousel-slide]'));
     var position = carousel.querySelector('[data-carousel-position]');
     var toggle = carousel.querySelector('[data-carousel-toggle]');
+    var dots = Array.prototype.slice.call(
+        carousel.querySelectorAll('[data-carousel-dot]'));
     var current = 0;
     var timer = null;
     var paused = false;
@@ -345,8 +358,18 @@
         slides.forEach(function (slide, slideIndex) {
             slide.hidden = slideIndex !== current;
         });
+        dots.forEach(function (dot, dotIndex) {
+            dot.classList.toggle('active', dotIndex === current);
+        });
         position.textContent = (current + 1) + ' / ' + slides.length;
     }
+
+    dots.forEach(function (dot, dotIndex) {
+        dot.addEventListener('click', function () {
+            show(dotIndex);
+            startRotation();
+        });
+    });
 
     function stopRotation() {
         if (timer) window.clearInterval(timer);
@@ -375,6 +398,19 @@
         if (paused) stopRotation();
         else startRotation();
     });
+    var touchStartX = null;
+    carousel.addEventListener('touchstart', function (event) {
+        touchStartX = event.changedTouches[0].clientX;
+    }, {passive: true});
+    carousel.addEventListener('touchend', function (event) {
+        if (touchStartX === null) return;
+        var deltaX = event.changedTouches[0].clientX - touchStartX;
+        touchStartX = null;
+        if (Math.abs(deltaX) < 40) return;
+        show(deltaX < 0 ? current + 1 : current - 1);
+        startRotation();
+    }, {passive: true});
+
     carousel.addEventListener('mouseenter', stopRotation);
     carousel.addEventListener('mouseleave', startRotation);
     carousel.addEventListener('focusin', stopRotation);
