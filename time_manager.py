@@ -90,9 +90,13 @@ class TimeManager:
         balance = self.user_manager.check_balance(mac)
 
         if balance <= 0:
-            self.logger.info(f"Balance zero for {mac}, blocking...")
-            self.network_controller.block_mac(mac)
-            self.user_manager.clear_session(mac)
+            # Act only on the transition to empty: re-blocking an already
+            # blocked device every poll just spams the log and churns
+            # iptables without changing any state.
+            if self.network_controller.is_access_allowed(mac):
+                self.logger.info(f"Balance zero for {mac}, blocking...")
+                self.network_controller.block_mac(mac)
+                self.user_manager.clear_session(mac)
             return
 
         # A concurrent top-up can race with a stale zero-balance block. Track
@@ -118,7 +122,8 @@ class TimeManager:
         if self.user_manager.deduct_time(mac, to_deduct):
             self.user_manager.set_last_deduction(mac, now)
             new_balance = self.user_manager.check_balance(mac)
-            self.logger.info(
+            # user_manager already logs each deduction at INFO
+            self.logger.debug(
                 f"Deducted {to_deduct} minute(s) from {mac}, remaining: {new_balance}")
             if new_balance <= 0:
                 self.logger.info(f"Balance depleted for {mac}, blocking...")

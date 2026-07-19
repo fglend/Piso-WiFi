@@ -506,7 +506,9 @@ class UserManager:
                 return False
 
             user_id, current_balance = result['id'], result['time_balance']
-            new_balance = max(0, current_balance - minutes)
+            # round() keeps repeated fractional deductions from accumulating
+            # float dust (e.g. 47.54999999999998) in the stored balance
+            new_balance = round(max(0, current_balance - minutes), 2)
 
             c.execute('''
                 UPDATE users

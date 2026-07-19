@@ -101,3 +101,24 @@ def test_stop_uses_bounded_wait(user_manager, mock_network, settings):
     tm.stop()
 
     tm.thread.join.assert_called_once_with(timeout=3)
+
+
+def test_zero_balance_blocks_once_not_every_poll(user_manager, mock_network, settings):
+    tm = make_tm(user_manager, mock_network, settings)
+    connect(mock_network, MAC)
+    # First poll: device is still allowed -> block and log the transition
+    mock_network.is_access_allowed.return_value = True
+    tm._check_and_deduct_time()
+    assert mock_network.block_mac.call_count == 1
+    # Subsequent polls: already blocked -> no repeated block/log churn
+    mock_network.is_access_allowed.return_value = False
+    tm._check_and_deduct_time()
+    tm._check_and_deduct_time()
+    assert mock_network.block_mac.call_count == 1
+
+
+def test_deducted_balance_has_no_float_dust(user_manager, mock_network, settings):
+    user_manager.add_time(MAC, 5, 48.57)
+    user_manager.deduct_time(MAC, 1.03)
+    balance = user_manager.check_balance(MAC)
+    assert balance == round(balance, 2)
