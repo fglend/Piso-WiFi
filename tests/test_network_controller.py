@@ -571,3 +571,52 @@ def test_wired_write_configs_reuses_shared_dnsmasq_template(settings, tmp_path):
                   if not line.strip().startswith('#')}
     assert 'log-queries' not in directives
     assert 'log-dhcp' in directives
+
+
+def test_firewall_marks_game_udp_for_low_latency_lane():
+    firewall = Firewall('eth0', 'eth1', '192.168.4.1',
+                        game_udp_ports='5000:5221,20561')
+
+    with patch('network.firewall.open', mock_open()), \
+            patch('network.firewall.run_cmd') as run_cmd:
+        firewall.setup()
+
+    commands = [call.args[0] for call in run_cmd.call_args_list]
+    mark_rules = [c for c in commands if 'MARK' in c]
+    assert any('--sports' in c and '5000:5221,20561' in c and '-o' in c
+               and 'eth0' in c for c in mark_rules)
+    dscp_rules = [c for c in commands if 'DSCP' in c]
+    assert any('--dports' in c and 'eth1' in c for c in dscp_rules)
+
+
+def test_firewall_rejects_bad_game_ports_and_caps_list():
+    firewall = Firewall('eth0', 'eth1', '192.168.4.1',
+                        game_udp_ports='5000:5221,nope,70000,'
+                        + ','.join(str(p) for p in range(1000, 1020)))
+    assert 'nope' not in firewall.game_udp_ports
+    assert '70000' not in firewall.game_udp_ports
+    assert len(firewall.game_udp_ports) == 15
+
+
+def test_firewall_without_game_ports_adds_no_marking():
+    firewall = Firewall('eth0', 'eth1', '192.168.4.1', game_udp_ports='')
+
+    with patch('network.firewall.open', mock_open()), \
+            patch('network.firewall.run_cmd') as run_cmd:
+        firewall.setup()
+
+    commands = [call.args[0] for call in run_cmd.call_args_list]
+    assert not any('MARK' in c or 'DSCP' in c for c in commands)
+
+
+def test_qos_setup_creates_game_lane():
+    from network.qos import GAME_CLASS_ID
+    qos = QoSManager('eth0', 2048, 1024)
+    with patch('network.qos.run_cmd') as run_cmd:
+        qos.setup()
+
+    commands = [call.args[0] for call in run_cmd.call_args_list]
+    assert any(f'1:{GAME_CLASS_ID}' in c and 'htb' in c and 'prio' in c
+               for c in commands)
+    assert any('fw' in c and '0x67' in c and f'1:{GAME_CLASS_ID}' in c
+               for c in commands)

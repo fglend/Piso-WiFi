@@ -14,6 +14,10 @@ from network.command import command_exists, run_cmd
 CHAIN = 'PISOWIFI'
 CAPTIVE_CHAIN = 'PISOWIFI_PORTAL'
 INPUT_CHAIN = 'PISOWIFI_INPUT'
+GAME_CHAIN = 'PISOWIFI_GAME'
+# fw mark consumed by the tc low-latency lane (see network/qos.py)
+GAME_MARK = '0x67'
+MAX_MULTIPORT_ENTRIES = 15
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +32,13 @@ def _synchronized(method):
 
 class Firewall:
     def __init__(self, ap_interface, internet_interface, ap_ip,
-                 protected_devices=None, portal_port=5000):
+                 protected_devices=None, portal_port=5000,
+                 game_udp_ports=''):
         self.ap_interface = ap_interface
         self.internet_interface = internet_interface
         self.ap_ip = ap_ip
         self.portal_port = int(portal_port)
+        self.game_udp_ports = self._parse_game_ports(game_udp_ports)
         self.protected_devices = {
             mac.strip().upper(): ip.strip()
             for mac, ip in (protected_devices or {}).items()
@@ -108,7 +114,56 @@ class Firewall:
         self._add_captive_rules([])
 
         self._add_static_rules()
+        self._add_game_marking()
         self.logger.info(f"Firewall chain {CHAIN} initialized")
+
+    def _parse_game_ports(self, spec):
+        """Validate a comma-separated multiport spec ('5000:5221,20561')."""
+        entries = []
+        for raw in (spec or '').split(','):
+            entry = raw.strip()
+            if not entry:
+                continue
+            parts = entry.split(':')
+            if len(parts) > 2 or not all(
+                    part.isdigit() and 0 < int(part) <= 65535
+                    for part in parts):
+                logger.error("Ignoring invalid game port entry %r", entry)
+                continue
+            entries.append(entry)
+        if len(entries) > MAX_MULTIPORT_ENTRIES:
+            logger.warning(
+                "Game port list truncated to %d entries (iptables multiport "
+                "limit); dropped: %s", MAX_MULTIPORT_ENTRIES,
+                ','.join(entries[MAX_MULTIPORT_ENTRIES:]))
+            entries = entries[:MAX_MULTIPORT_ENTRIES]
+        return entries
+
+    def _add_game_marking(self):
+        """Low-latency lane marking: game UDP replies to clients get a fw
+        mark (tc lifts them past bulk traffic); game uploads to the internet
+        get DSCP EF so upstream gear that honors DSCP can prioritize too.
+        Bandwidth caps are unaffected - this changes queueing order only."""
+        run_cmd(['iptables', '-t', 'mangle', '-N', GAME_CHAIN],
+                ignore_errors=True)
+        run_cmd(['iptables', '-t', 'mangle', '-F', GAME_CHAIN])
+        game_jump = ['POSTROUTING', '-j', GAME_CHAIN]
+        run_cmd(['iptables', '-t', 'mangle', '-D', *game_jump],
+                ignore_errors=True)
+        if not self.game_udp_ports:
+            return
+        run_cmd(['iptables', '-t', 'mangle', '-A', *game_jump])
+        ports = ','.join(self.game_udp_ports)
+        run_cmd(['iptables', '-t', 'mangle', '-A', GAME_CHAIN,
+                 '-o', self.ap_interface, '-p', 'udp',
+                 '-m', 'multiport', '--sports', ports,
+                 '-j', 'MARK', '--set-mark', GAME_MARK])
+        run_cmd(['iptables', '-t', 'mangle', '-A', GAME_CHAIN,
+                 '-o', self.internet_interface, '-p', 'udp',
+                 '-m', 'multiport', '--dports', ports,
+                 '-j', 'DSCP', '--set-dscp-class', 'ef'])
+        self.logger.info(
+            "Game low-latency marking enabled for UDP ports %s", ports)
 
     def _add_static_rules(self):
         # Infrastructure devices must remain reachable even when there are no

@@ -12,6 +12,13 @@ logger = logging.getLogger(__name__)
 
 CLASS_ID_MIN = 20
 CLASS_ID_MAX = 1019
+# Low-latency lane for packets carrying the firewall's game mark (0x67).
+# Game flows are tiny (~100 kbps) so the reserved rate is small; prio 0
+# means the lane is served before every client class when it has packets.
+GAME_CLASS_ID = 5
+GAME_MARK = '0x67'
+GAME_LANE_RATE_KBPS = 2048
+GAME_LANE_CEIL_KBPS = 4096
 
 
 class QoSManager:
@@ -38,8 +45,25 @@ class QoSManager:
                  'ceil', f'{self.default_download}kbit', 'burst', '15k'])
         run_cmd(['tc', 'qdisc', 'add', 'dev', self.ap_interface, 'ingress'])
 
+        # Game lane: marked packets bypass client queues for latency (their
+        # throughput stays negligible; caps on bulk traffic are untouched).
+        run_cmd(['tc', 'class', 'add', 'dev', self.ap_interface, 'parent', '1:1',
+                 'classid', f'1:{GAME_CLASS_ID}', 'htb',
+                 'rate', f'{GAME_LANE_RATE_KBPS}kbit',
+                 'ceil', f'{GAME_LANE_CEIL_KBPS}kbit',
+                 'prio', '0', 'burst', '15k'])
+        run_cmd(['tc', 'qdisc', 'add', 'dev', self.ap_interface,
+                 'parent', f'1:{GAME_CLASS_ID}',
+                 'handle', f'{GAME_CLASS_ID}:',
+                 'pfifo', 'limit', '64'])
+        run_cmd(['tc', 'filter', 'add', 'dev', self.ap_interface,
+                 'parent', '1:', 'protocol', 'ip', 'prio', '1',
+                 'handle', GAME_MARK, 'fw',
+                 'flowid', f'1:{GAME_CLASS_ID}'])
+
         self._clients.clear()
-        self.logger.info("QoS root qdiscs initialized")
+        self.logger.info("QoS root qdiscs initialized (game lane on 1:%d)",
+                         GAME_CLASS_ID)
 
     def _allocate_class_id(self):
         used = {c['class_id'] for c in self._clients.values()}

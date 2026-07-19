@@ -57,7 +57,9 @@ class NetworkController:
         self.ap = backend(settings)
         self.firewall = Firewall(settings.ap_interface, settings.internet_interface,
                                  settings.ap_ip, protected_devices,
-                                 portal_port=settings.port)
+                                 portal_port=settings.port,
+                                 game_udp_ports=getattr(
+                                     settings, 'game_udp_ports', ''))
         self.qos = QoSManager(settings.ap_interface,
                               self.DEFAULT_DOWNLOAD_SPEED, self.DEFAULT_UPLOAD_SPEED)
 

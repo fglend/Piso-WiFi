@@ -79,6 +79,12 @@ class Settings:
     # PoE router in bridge mode on the LAN interface). 'ap': the Pi broadcasts
     # its own hotspot with hostapd.
     network_mode: str = field(default_factory=lambda: os.getenv('NETWORK_MODE', 'ap'))
+    # UDP ports/ranges (iptables multiport syntax, max 15 entries) treated as
+    # game traffic and given the low-latency lane. Empty string disables.
+    game_udp_ports: str = field(default_factory=lambda: os.getenv(
+        'GAME_UDP_PORTS',
+        '5000:5221,7086:7995,8001:8012,9330:9340,10012:10039,'
+        '10101:10201,12235:12240,17000:18000,20561'))
     # Client-side interface. LAN_INTERFACE wins (wired setups); falls back to
     # WIFI_INTERFACE for AP mode.
     ap_interface: str = field(default_factory=lambda: os.getenv(
