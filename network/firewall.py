@@ -131,39 +131,58 @@ class Firewall:
                 logger.error("Ignoring invalid game port entry %r", entry)
                 continue
             entries.append(entry)
-        if len(entries) > MAX_MULTIPORT_ENTRIES:
-            logger.warning(
-                "Game port list truncated to %d entries (iptables multiport "
-                "limit); dropped: %s", MAX_MULTIPORT_ENTRIES,
-                ','.join(entries[MAX_MULTIPORT_ENTRIES:]))
-            entries = entries[:MAX_MULTIPORT_ENTRIES]
         return entries
+
+    @staticmethod
+    def _chunk_game_ports(entries):
+        """Group entries into multiport-safe chunks. iptables multiport
+        accepts at most 15 PORTS per rule and a range consumes two slots,
+        so oversized lists become several rules instead of one."""
+        chunks = []
+        current, slots = [], 0
+        for entry in entries:
+            cost = 2 if ':' in entry else 1
+            if current and slots + cost > MAX_MULTIPORT_ENTRIES:
+                chunks.append(current)
+                current, slots = [], 0
+            current.append(entry)
+            slots += cost
+        if current:
+            chunks.append(current)
+        return chunks
 
     def _add_game_marking(self):
         """Low-latency lane marking: game UDP replies to clients get a fw
         mark (tc lifts them past bulk traffic); game uploads to the internet
         get DSCP EF so upstream gear that honors DSCP can prioritize too.
         Bandwidth caps are unaffected - this changes queueing order only."""
-        run_cmd(['iptables', '-t', 'mangle', '-N', GAME_CHAIN],
-                ignore_errors=True)
-        run_cmd(['iptables', '-t', 'mangle', '-F', GAME_CHAIN])
-        game_jump = ['POSTROUTING', '-j', GAME_CHAIN]
-        run_cmd(['iptables', '-t', 'mangle', '-D', *game_jump],
-                ignore_errors=True)
-        if not self.game_udp_ports:
-            return
-        run_cmd(['iptables', '-t', 'mangle', '-A', *game_jump])
-        ports = ','.join(self.game_udp_ports)
-        run_cmd(['iptables', '-t', 'mangle', '-A', GAME_CHAIN,
-                 '-o', self.ap_interface, '-p', 'udp',
-                 '-m', 'multiport', '--sports', ports,
-                 '-j', 'MARK', '--set-mark', GAME_MARK])
-        run_cmd(['iptables', '-t', 'mangle', '-A', GAME_CHAIN,
-                 '-o', self.internet_interface, '-p', 'udp',
-                 '-m', 'multiport', '--dports', ports,
-                 '-j', 'DSCP', '--set-dscp-class', 'ef'])
-        self.logger.info(
-            "Game low-latency marking enabled for UDP ports %s", ports)
+        try:
+            run_cmd(['iptables', '-t', 'mangle', '-N', GAME_CHAIN],
+                    ignore_errors=True)
+            run_cmd(['iptables', '-t', 'mangle', '-F', GAME_CHAIN])
+            game_jump = ['POSTROUTING', '-j', GAME_CHAIN]
+            run_cmd(['iptables', '-t', 'mangle', '-D', *game_jump],
+                    ignore_errors=True)
+            if not self.game_udp_ports:
+                return
+            run_cmd(['iptables', '-t', 'mangle', '-A', *game_jump])
+            for chunk in self._chunk_game_ports(self.game_udp_ports):
+                ports = ','.join(chunk)
+                run_cmd(['iptables', '-t', 'mangle', '-A', GAME_CHAIN,
+                         '-o', self.ap_interface, '-p', 'udp',
+                         '-m', 'multiport', '--sports', ports,
+                         '-j', 'MARK', '--set-mark', GAME_MARK])
+                run_cmd(['iptables', '-t', 'mangle', '-A', GAME_CHAIN,
+                         '-o', self.internet_interface, '-p', 'udp',
+                         '-m', 'multiport', '--dports', ports,
+                         '-j', 'DSCP', '--set-dscp-class', 'ef'])
+            self.logger.info(
+                "Game low-latency marking enabled for UDP ports %s",
+                ','.join(self.game_udp_ports))
+        except Exception as e:
+            # The lane is an optimization - never take the gateway down
+            # over it (e.g. an iptables build rejecting a port spec).
+            self.logger.error("Game marking setup failed (disabled): %s", e)
 
     def _add_static_rules(self):
         # Infrastructure devices must remain reachable even when there are no

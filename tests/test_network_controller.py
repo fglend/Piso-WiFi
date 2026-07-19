@@ -589,13 +589,25 @@ def test_firewall_marks_game_udp_for_low_latency_lane():
     assert any('--dports' in c and 'eth1' in c for c in dscp_rules)
 
 
-def test_firewall_rejects_bad_game_ports_and_caps_list():
+def test_firewall_rejects_bad_game_ports_and_chunks_rules():
     firewall = Firewall('eth0', 'eth1', '192.168.4.1',
                         game_udp_ports='5000:5221,nope,70000,'
                         + ','.join(str(p) for p in range(1000, 1020)))
     assert 'nope' not in firewall.game_udp_ports
     assert '70000' not in firewall.game_udp_ports
-    assert len(firewall.game_udp_ports) == 15
+    # Nothing valid is dropped; oversized lists become multiple rules
+    assert len(firewall.game_udp_ports) == 21
+
+    with patch('network.firewall.open', mock_open()), \
+            patch('network.firewall.run_cmd') as run_cmd:
+        firewall.setup()
+    mark_rules = [call.args[0] for call in run_cmd.call_args_list
+                  if 'MARK' in call.args[0]]
+    assert len(mark_rules) == 2
+    # A range costs two multiport slots; every rule must fit the limit of 15
+    for rule in mark_rules:
+        ports = rule[rule.index('--sports') + 1].split(',')
+        assert sum(2 if ':' in p else 1 for p in ports) <= 15
 
 
 def test_firewall_without_game_ports_adds_no_marking():
