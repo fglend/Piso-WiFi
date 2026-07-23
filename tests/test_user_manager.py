@@ -222,3 +222,15 @@ def test_get_users_with_balance_includes_last_connection(user_manager):
     assert users[0]['hostname'] == 'phone'
     assert users[0]['ip_address'] == '192.168.4.10'
     assert users[0]['last_seen_at'] is not None
+
+
+def test_revenue_adjustment_reduces_summary(user_manager):
+    user_manager.add_time(MAC, 50, 600, source='coin')
+    assert user_manager.get_revenue_summary()['day'] == 50
+    assert user_manager.record_revenue_adjustment(20) is True
+    assert user_manager.get_revenue_summary()['day'] == 30
+    # audit trail: the negative adjustment is a visible transaction
+    sources = [t['source'] for t in user_manager.get_transactions()]
+    assert 'adjustment' in sources
+    assert user_manager.record_revenue_adjustment(0) is False
+    assert user_manager.record_revenue_adjustment(-5) is False

@@ -766,6 +766,44 @@ class UserManager:
             out.result = [dict(r) for r in rows]
         return out.result
 
+    def record_revenue_adjustment(self, amount):
+        """Record a manual revenue correction as a negative transaction.
+
+        amount is the positive peso figure to REMOVE from revenue (e.g. test
+        coins from a grounded pulse). Stored as source='adjustment' with a
+        negative amount so the revenue summary nets it out while keeping an
+        audit trail. Returns True on success.
+        """
+        if amount <= 0:
+            self.logger.error("Revenue adjustment must be positive: %r", amount)
+            return False
+        with self._with_conn('Recording revenue adjustment',
+                             default=False) as (conn, out):
+            conn.execute(
+                'INSERT INTO transactions (user_id, amount, minutes, source) '
+                "VALUES (NULL, ?, 0, 'adjustment')", (-abs(amount),))
+            out.result = True
+        return out.result
+
+    def record_revenue_adjustment(self, amount):
+        """Record a manual revenue correction as a negative transaction.
+
+        amount is the positive peso figure to REMOVE from revenue (e.g. test
+        coins from a grounded pulse). Stored as source='adjustment' with a
+        negative amount so the revenue summary nets it out while keeping an
+        audit trail. Returns True on success.
+        """
+        if amount <= 0:
+            self.logger.error("Revenue adjustment must be positive: %r", amount)
+            return False
+        with self._with_conn('Recording revenue adjustment',
+                             default=False) as (conn, out):
+            conn.execute(
+                'INSERT INTO transactions (user_id, amount, minutes, source) '
+                "VALUES (NULL, ?, 0, 'adjustment')", (-abs(amount),))
+            out.result = True
+        return out.result
+
     def get_revenue_summary(self):
         with self._with_conn(
                 'Calculating revenue summary',
@@ -788,7 +826,7 @@ class UserManager:
                         THEN amount ELSE 0
                     END), 0) AS month
                 FROM transactions
-                WHERE amount > 0
+                WHERE amount != 0
             ''').fetchone()
             out.result = {
                 'day': float(row['day']),

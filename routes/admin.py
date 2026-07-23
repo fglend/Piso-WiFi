@@ -485,12 +485,23 @@ def vouchers():
     return render_template('vouchers.html', vouchers=voucher_list, show_all=show_all)
 
 
-@admin_bp.route('/transactions')
+@admin_bp.route('/transactions', methods=['GET', 'POST'])
 @admin_required
 def transactions():
     svc = _services()
-    return render_template('transactions.html',
-                           transactions=svc.user_manager.get_transactions(limit=100))
+    if request.method == 'POST':
+        amount = _form_number('amount', minimum=1, cast=float)
+        if amount is None:
+            flash('Enter a valid amount to deduct from revenue', 'error')
+        elif svc.user_manager.record_revenue_adjustment(amount):
+            flash(f'Revenue adjusted down by ₱{amount:g}', 'success')
+        else:
+            flash('Error recording revenue adjustment', 'error')
+        return redirect(url_for('admin.transactions'))
+    return render_template(
+        'transactions.html',
+        transactions=svc.user_manager.get_transactions(limit=100),
+        revenue=svc.user_manager.get_revenue_summary())
 
 
 @admin_bp.route('/debug/connections')

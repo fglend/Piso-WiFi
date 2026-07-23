@@ -400,3 +400,15 @@ def test_dashboard_shows_devices_with_balance(admin_client, csrf_token, services
     page = resp.get_data(as_text=True)
     assert 'With Balance' in page
     assert MAC in page
+
+
+def test_admin_can_deduct_revenue(admin_client, csrf_token, services):
+    services.user_manager.add_time(MAC, 30, 300, source='coin')
+    resp = post(admin_client, '/transactions', csrf_token, amount=10)
+    assert resp.status_code == 302
+    assert services.user_manager.get_revenue_summary()['day'] == 20
+
+
+def test_deduct_revenue_requires_login(client, csrf_token):
+    resp = client.post('/transactions', data={'csrf_token': csrf_token, 'amount': 10})
+    assert resp.status_code == 302

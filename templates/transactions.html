@@ -8,6 +8,23 @@
     <a href="{{ url_for('admin.dashboard') }}" class="btn btn-ghost btn-sm">Back to Dashboard</a>
 </div>
 
+<div class="card mb-3">
+    <div class="card-body">
+        <h2 class="mb-1" style="font-size:1.1rem;">Adjust Revenue</h2>
+        <p class="muted small">Deduct an amount from revenue (e.g. test coins).
+            Recorded as an adjustment transaction for the audit trail.
+            {% if revenue %}Today so far: ₱{{ '%g'|format(revenue.day) }}.{% endif %}</p>
+        <form action="{{ url_for('admin.transactions') }}" method="POST" class="form-row">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <div style="max-width: 200px;">
+                <label for="deduct-amount">Amount to deduct (₱)</label>
+                <input type="number" id="deduct-amount" name="amount" min="1" step="any" placeholder="e.g. 5" required>
+            </div>
+            <button type="submit" class="btn btn-warn">Deduct from Revenue</button>
+        </form>
+    </div>
+</div>
+
 <div class="card">
     <div class="table-wrap">
         <table class="table">
@@ -31,6 +48,7 @@
                         <span class="badge {{ 'badge-info' if t.source == 'voucher' else ('badge-warn' if t.source == 'coin' else 'badge-muted') }}">
                             {{ t.source }}
                         </span>
+                        {% if t.amount < 0 %}<span class="badge badge-muted">−₱{{ '%g'|format(-t.amount) }}</span>{% endif %}
                     </td>
                 </tr>
                 {% else %}
