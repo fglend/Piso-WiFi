@@ -43,6 +43,21 @@ def test_pulse_without_claim_is_ignored(user_manager, mock_network, settings):
     assert user_manager.check_balance(MAC) == 0
 
 
+def test_stray_pulses_are_throttled_and_counted(user_manager, mock_network,
+                                                 settings, caplog):
+    """A stuck SIG pin must not flood the log: one summary per interval."""
+    svc = make_service(user_manager, mock_network, settings)
+    import logging
+    with caplog.at_level(logging.WARNING, logger='coinslot'):
+        for _ in range(50):
+            svc._on_pulse()
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    # One summary line for the burst, not one per pulse
+    assert len(warnings) == 1
+    assert svc._stray_pulses == 49  # counted since the last summary
+    assert user_manager.check_balance(MAC) == 0
+
+
 def test_claim_and_credit(user_manager, mock_network, settings):
     svc = make_service(user_manager, mock_network, settings)
     assert svc.claim(MAC) == settings.coinslot_claim_timeout

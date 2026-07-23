@@ -119,6 +119,12 @@ class CoinslotService:
         # active claim: {'mac': str, 'expires': float, 'pulses': int, 'pesos': float}
         self._claim = None
         self._relay_on = False
+        # Throttle stray-pulse warnings: a grounded/floating SIG pin can fire
+        # continuously, and one log line per pulse would hammer the SD card.
+        self._stray_pulses = 0
+        self._stray_last_log = 0.0
+
+    STRAY_LOG_INTERVAL_S = 60.0
 
     # --- relay ---------------------------------------------------------
 
@@ -171,7 +177,17 @@ class CoinslotService:
         with self._lock:
             now = time.monotonic()
             if not self._claim or self._claim['expires'] <= now:
-                self.logger.warning("Coin pulse received with no active claim - ignored")
+                # Stray pulse (no claim -> nothing credited). Summarize at most
+                # once per interval so a stuck pin cannot flood the log.
+                self._stray_pulses += 1
+                if now - self._stray_last_log >= self.STRAY_LOG_INTERVAL_S:
+                    self.logger.warning(
+                        "Ignored %d coin pulse(s) with no active claim in the "
+                        "last %gs (check the coinslot SIG wiring if this "
+                        "persists)", self._stray_pulses,
+                        self.STRAY_LOG_INTERVAL_S)
+                    self._stray_pulses = 0
+                    self._stray_last_log = now
                 return
             claim = self._claim
             claim['pulses'] += 1
