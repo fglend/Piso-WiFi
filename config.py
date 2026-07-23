@@ -164,6 +164,12 @@ class Settings:
                 raise RuntimeError(
                     'Invalid configuration: POE_AP_IP_ADDRESS must be outside '
                     'the DHCP range')
+        if self.coinslot_enabled and self.coinslot_gpio == self.coinslot_relay_gpio:
+            raise RuntimeError(
+                'Invalid configuration: COINSLOT_GPIO and COINSLOT_RELAY_GPIO '
+                'must be different pins (both are '
+                f'{self.coinslot_gpio}). The pulse input and relay output '
+                'cannot share one GPIO.')
         problems = []
         if self.is_production:
             if self.secret_key in _INSECURE_DEFAULTS:
