@@ -37,9 +37,16 @@ def make_service(user_manager, mock_network, settings, relay=None):
                            reader=FakeReader(), relay=relay or FakeRelay())
 
 
+def _settle(svc):
+    """Fast-forward past the inter-coin gap so pending pulses get credited."""
+    if svc._claim:
+        svc._claim['last_pulse'] = 0
+    svc._flush_credit_if_settled()
+
+
 def test_pulse_without_claim_is_ignored(user_manager, mock_network, settings):
     svc = make_service(user_manager, mock_network, settings)
-    svc._on_pulse()
+    svc._count_pulse()
     assert user_manager.check_balance(MAC) == 0
 
 
@@ -50,7 +57,7 @@ def test_stray_pulses_are_throttled_and_counted(user_manager, mock_network,
     import logging
     with caplog.at_level(logging.WARNING, logger='coinslot'):
         for _ in range(50):
-            svc._on_pulse()
+            svc._count_pulse()
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     # One summary line for the burst, not one per pulse
     assert len(warnings) == 1
@@ -62,7 +69,8 @@ def test_claim_and_credit(user_manager, mock_network, settings):
     svc = make_service(user_manager, mock_network, settings)
     assert svc.claim(MAC) == settings.coinslot_claim_timeout
 
-    svc._on_pulse()  # 1 pulse = 1 peso by default
+    svc._count_pulse()  # 1 pulse = 1 peso by default
+    _settle(svc)
     # ₱1 tier of the seeded rate table = 10 minutes
     assert user_manager.check_balance(MAC) == 10
     mock_network.unblock_mac.assert_called_with(MAC)
@@ -73,6 +81,23 @@ def test_claim_and_credit(user_manager, mock_network, settings):
 
     tx = user_manager.get_transactions()[0]
     assert tx['source'] == 'coin'
+
+
+def test_multi_pulse_coin_credits_once_after_burst(user_manager, mock_network,
+                                                   settings):
+    """A ₱5 coin arrives as 5 fast pulses; it must credit ₱5, not ₱1."""
+    svc = make_service(user_manager, mock_network, settings)
+    svc.claim(MAC)
+    for _ in range(5):
+        svc._count_pulse()
+
+    # Mid-burst (no settle gap yet): nothing credited.
+    svc._flush_credit_if_settled()
+    assert svc.status(MAC)['pesos_inserted'] == 0
+
+    # Burst goes quiet -> the whole coin is credited exactly once.
+    _settle(svc)
+    assert svc.status(MAC)['pesos_inserted'] == 5
 
 
 def test_claim_is_exclusive(user_manager, mock_network, settings):
@@ -86,7 +111,7 @@ def test_expired_claim_ignores_pulses(user_manager, mock_network, settings):
     svc = make_service(user_manager, mock_network, settings)
     svc.claim(MAC)
     svc._claim['expires'] = 0  # force expiry
-    svc._on_pulse()
+    svc._count_pulse()
     assert user_manager.check_balance(MAC) == 0
     assert svc.status(MAC) == {'active': False}
 
@@ -95,9 +120,11 @@ def test_pulses_per_peso(user_manager, mock_network, settings):
     settings.coinslot_pulses_per_peso = 2
     svc = make_service(user_manager, mock_network, settings)
     svc.claim(MAC)
-    svc._on_pulse()
+    svc._count_pulse()
+    _settle(svc)
     assert user_manager.check_balance(MAC) == 0  # half a peso: no credit yet
-    svc._on_pulse()
+    svc._count_pulse()
+    _settle(svc)
     assert user_manager.check_balance(MAC) == 10  # ₱1 tier
 
 
