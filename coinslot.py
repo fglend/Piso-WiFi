@@ -150,7 +150,8 @@ class CoinslotService:
                 return None
             self._claim = {'mac': mac_address,
                            'expires': now + self.settings.coinslot_claim_timeout,
-                           'pulses': 0, 'pesos': 0.0, 'minutes_added': 0.0,
+                           'pulses': 0, 'pesos': 0, 'minutes_added': 0.0,
+                           'last_pulse': now,
                            # rate table snapshot: one session, one price list
                            'rates': self.user_manager.get_rates()}
             self._set_relay(True)
@@ -173,7 +174,17 @@ class CoinslotService:
 
     # --- pulse handling ---------------------------------------------------
 
-    def _on_pulse(self):
+    # A coin (especially a ₱5/₱10) sends a *burst* of pulses. The poll loop
+    # counts each edge as fast as it can, then this quiet gap marks the end of
+    # one coin so the whole burst is tiered and credited as a single insertion.
+    # Crediting is deliberately kept OUT of the counting path: a DB write plus
+    # iptables/tc calls take long enough that pulses arriving meanwhile would be
+    # coalesced by sysfs edge detection and silently lost (a ₱5 coin then reads
+    # as ₱1). Counting must return to poll() in microseconds.
+    COIN_SETTLE_S = 0.2
+
+    def _count_pulse(self):
+        """Fast path: tally one edge under the lock, no I/O."""
         with self._lock:
             now = time.monotonic()
             if not self._claim or self._claim['expires'] <= now:
@@ -191,27 +202,48 @@ class CoinslotService:
                 return
             claim = self._claim
             claim['pulses'] += 1
-            if claim['pulses'] % self.settings.coinslot_pulses_per_peso != 0:
-                return
-            pesos = 1
-            old_total = claim['pesos']
-            claim['pesos'] = old_total + pesos
+            claim['last_pulse'] = now
             # inserting coins keeps the window open
             claim['expires'] = now + self.settings.coinslot_claim_timeout
-            mac = claim['mac']
-            # Tier the CUMULATIVE session total and credit the delta, so a
-            # ₱5 coin (5 pulses) earns the ₱5 tier, not 5x the ₱1 tier
+
+    def _has_pending_credit(self):
+        """True when whole pesos have been counted but not yet credited."""
+        with self._lock:
+            claim = self._claim
+            if not claim:
+                return False
+            ppp = self.settings.coinslot_pulses_per_peso
+            return claim['pulses'] // ppp > claim['pesos']
+
+    def _flush_credit_if_settled(self):
+        """Credit accumulated pulses once the coin's burst has gone quiet."""
+        with self._lock:
+            claim = self._claim
+            if not claim:
+                return
+            ppp = self.settings.coinslot_pulses_per_peso
+            total_pesos = claim['pulses'] // ppp
+            delta = total_pesos - claim['pesos']
+            if delta <= 0:
+                return
+            # Wait out the inter-pulse gaps so a multi-pulse coin is tiered as
+            # one insertion (a ₱5 coin earns the ₱5 tier, not 5x the ₱1 tier).
+            if time.monotonic() - claim['last_pulse'] < self.COIN_SETTLE_S:
+                return
+            old_total = claim['pesos']
+            claim['pesos'] = total_pesos
             fallback = self.settings.minutes_per_peso
-            minutes = (compute_minutes(claim['pesos'], claim['rates'], fallback)
+            minutes = (compute_minutes(total_pesos, claim['rates'], fallback)
                        - compute_minutes(old_total, claim['rates'], fallback))
             claim['minutes_added'] += minutes
-        if self.user_manager.add_time(mac, pesos, minutes, source='coin'):
+            mac = claim['mac']
+        if self.user_manager.add_time(mac, delta, minutes, source='coin'):
             self.network_controller.unblock_mac(mac)
             info = self.user_manager.get_device_info(mac)
             if info:
                 self.network_controller.set_bandwidth_limit(
                     mac, info['download_limit'], info['upload_limit'])
-            self.logger.info(f"Credited ₱{pesos} ({minutes:g} min) to {mac}")
+            self.logger.info(f"Credited ₱{delta} ({minutes:g} min) to {mac}")
         else:
             self.logger.error(f"Failed to credit coin for {mac}")
 
@@ -224,8 +256,12 @@ class CoinslotService:
     def _run(self):
         while self.running:
             try:
-                if self.reader.wait_pulse(timeout=1.0):
-                    self._on_pulse()
+                # Poll briefly while a burst is mid-credit so the settle gap is
+                # detected promptly; idle longer otherwise to avoid busy-waiting.
+                timeout = 0.1 if self._has_pending_credit() else 1.0
+                if self.reader.wait_pulse(timeout=timeout):
+                    self._count_pulse()
+                self._flush_credit_if_settled()
                 self._expire_claim_if_due()
             except Exception as e:
                 self.logger.error(f"Coinslot error: {e}")
