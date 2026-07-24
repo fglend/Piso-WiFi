@@ -115,6 +115,7 @@ class CoinslotService:
         self.logger = logger
         self.running = False
         self.thread = None
+        self.credit_thread = None
         self._lock = threading.Lock()
         # active claim: {'mac': str, 'expires': float, 'pulses': int, 'pesos': float}
         self._claim = None
@@ -174,14 +175,14 @@ class CoinslotService:
 
     # --- pulse handling ---------------------------------------------------
 
-    # A coin (especially a ₱5/₱10) sends a *burst* of pulses. The poll loop
-    # counts each edge as fast as it can, then this quiet gap marks the end of
-    # one coin so the whole burst is tiered and credited as a single insertion.
-    # Crediting is deliberately kept OUT of the counting path: a DB write plus
-    # iptables/tc calls take long enough that pulses arriving meanwhile would be
-    # coalesced by sysfs edge detection and silently lost (a ₱5 coin then reads
-    # as ₱1). Counting must return to poll() in microseconds.
-    COIN_SETTLE_S = 0.2
+    # A coin (especially a ₱5/₱10) sends a *burst* of pulses. Counting runs on
+    # its own thread that does nothing but wait on the pin and tally edges, so
+    # it is always back in poll() within microseconds. Crediting (a DB write
+    # plus iptables/tc calls, ~0.5s) runs on a SEPARATE thread: if that slow
+    # work ran on the counting thread, pulses arriving during it would be
+    # coalesced by sysfs edge detection and silently lost (a ₱5 coin reading as
+    # ₱3-4). The settle gap below marks the end of a coin so its whole burst is
+    # tiered and credited as one insertion.
 
     def _count_pulse(self):
         """Fast path: tally one edge under the lock, no I/O."""
@@ -206,17 +207,9 @@ class CoinslotService:
             # inserting coins keeps the window open
             claim['expires'] = now + self.settings.coinslot_claim_timeout
 
-    def _has_pending_credit(self):
-        """True when whole pesos have been counted but not yet credited."""
-        with self._lock:
-            claim = self._claim
-            if not claim:
-                return False
-            ppp = self.settings.coinslot_pulses_per_peso
-            return claim['pulses'] // ppp > claim['pesos']
-
     def _flush_credit_if_settled(self):
         """Credit accumulated pulses once the coin's burst has gone quiet."""
+        settle_s = self.settings.coinslot_coin_settle_ms / 1000.0
         with self._lock:
             claim = self._claim
             if not claim:
@@ -228,7 +221,7 @@ class CoinslotService:
                 return
             # Wait out the inter-pulse gaps so a multi-pulse coin is tiered as
             # one insertion (a ₱5 coin earns the ₱5 tier, not 5x the ₱1 tier).
-            if time.monotonic() - claim['last_pulse'] < self.COIN_SETTLE_S:
+            if time.monotonic() - claim['last_pulse'] < settle_s:
                 return
             old_total = claim['pesos']
             claim['pesos'] = total_pesos
@@ -254,18 +247,24 @@ class CoinslotService:
                 self._set_relay(False)
 
     def _run(self):
+        """Pulse-counting loop: nothing but wait + tally, so no edge is missed."""
         while self.running:
             try:
-                # Poll briefly while a burst is mid-credit so the settle gap is
-                # detected promptly; idle longer otherwise to avoid busy-waiting.
-                timeout = 0.1 if self._has_pending_credit() else 1.0
-                if self.reader.wait_pulse(timeout=timeout):
+                if self.reader.wait_pulse(timeout=1.0):
                     self._count_pulse()
+            except Exception as e:
+                self.logger.error(f"Coinslot pulse error: {e}")
+                time.sleep(1)
+
+    def _credit_run(self):
+        """Crediting loop: does the slow DB/network work off the pulse thread."""
+        while self.running:
+            try:
                 self._flush_credit_if_settled()
                 self._expire_claim_if_due()
             except Exception as e:
-                self.logger.error(f"Coinslot error: {e}")
-                time.sleep(1)
+                self.logger.error(f"Coinslot credit error: {e}")
+            time.sleep(0.05)
 
     def start(self):
         self.relay.open()
@@ -273,6 +272,8 @@ class CoinslotService:
         self.running = True
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
+        self.credit_thread = threading.Thread(target=self._credit_run, daemon=True)
+        self.credit_thread.start()
         self.logger.info(
             f"Coinslot service started (SIG GPIO {self.settings.coinslot_gpio}, "
             f"relay GPIO {self.settings.coinslot_relay_gpio})")
@@ -285,6 +286,8 @@ class CoinslotService:
             ('de-energize relay', lambda: self._set_relay(False)),
             ('join pulse thread',
              lambda: self.thread.join(timeout=3) if self.thread else None),
+            ('join credit thread',
+             lambda: self.credit_thread.join(timeout=3) if self.credit_thread else None),
             ('close pulse reader', self.reader.close),
             # close() retries the inactive write before unexporting the GPIO.
             ('close relay GPIO', self.relay.close),

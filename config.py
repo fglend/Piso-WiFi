@@ -117,6 +117,12 @@ class Settings:
         default_factory=lambda: _env_int('COINSLOT_CLAIM_TIMEOUT', 60))
     coinslot_debounce_ms: int = field(
         default_factory=lambda: _env_int('COINSLOT_DEBOUNCE_MS', 50))
+    # Quiet gap that marks the end of one coin's pulse burst. Must be longer
+    # than the acceptor's inter-pulse gap (so a ₱5 coin's pulses group into a
+    # single tiered credit) but shorter than the time between two hand-inserted
+    # coins. Raise it if a single coin is being split into multiple credits.
+    coinslot_coin_settle_ms: int = field(
+        default_factory=lambda: _env_int('COINSLOT_COIN_SETTLE_MS', 400))
     # Relay that switches power to the acceptor: energized only while a claim
     # is active, so the acceptor is electrically dead the rest of the time.
     coinslot_relay_gpio: int = field(default_factory=lambda: _env_int('COINSLOT_RELAY_GPIO', 7))
