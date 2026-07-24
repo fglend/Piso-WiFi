@@ -104,8 +104,11 @@ class Settings:
     dhcp_range_end: str = field(default_factory=lambda: os.getenv('DHCP_RANGE_END', '192.168.4.20'))
     network_mask: str = field(default_factory=lambda: os.getenv('NETWORK_MASK', '255.255.255.0'))
 
-    # Time manager
-    check_interval: int = field(default_factory=lambda: _env_int('CHECK_INTERVAL', 5))
+    # Time manager. The deduction is elapsed-time based, so a longer interval
+    # never loses metering accuracy - it only delays the block once a balance
+    # hits zero (up to CHECK_INTERVAL of free browsing). 15s balances that leak
+    # against poll cost (each poll spawns `ip neigh` + DB writes) on an SBC.
+    check_interval: int = field(default_factory=lambda: _env_int('CHECK_INTERVAL', 15))
     pause_on_disconnect: bool = field(default_factory=lambda: _env_bool('PAUSE_ON_DISCONNECT', True))
 
     # Coinslot (GPIO pulse type, e.g. CH-926 / Weiyu universal)

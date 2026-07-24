@@ -264,7 +264,9 @@ class CoinslotService:
                 self._expire_claim_if_due()
             except Exception as e:
                 self.logger.error(f"Coinslot credit error: {e}")
-            time.sleep(0.05)
+            # Tick fast enough to catch the settle gap while a coin is being
+            # inserted; idle slowly the rest of the time to spare the CPU.
+            time.sleep(0.05 if self._claim else 0.5)
 
     def start(self):
         self.relay.open()

@@ -65,7 +65,7 @@ FLASK_PORT=5000
 FLASK_DEBUG=False
 LOG_LEVEL=INFO
 LOG_FILE=logs/piso_wifi.log
-CHECK_INTERVAL=60
+CHECK_INTERVAL=15
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=admin123
 DHCP_RANGE_START=192.168.4.2
@@ -73,6 +73,18 @@ DHCP_RANGE_END=192.168.4.20
 NETWORK_MASK=255.255.255.0
 AP_IP=192.168.4.1
 EOF
+
+# Keep system logs in RAM to spare the SD card. Logs are cleared on reboot
+# and capped so they can never exhaust memory. Removes the biggest continuous
+# writer on an SD-card-rooted Orange Pi.
+echo -e "${GREEN}Configuring journald for SD-card longevity...${NC}"
+mkdir -p /etc/systemd/journald.conf.d
+cat > /etc/systemd/journald.conf.d/pisowifi.conf << EOF
+[Journal]
+Storage=volatile
+RuntimeMaxUse=50M
+EOF
+systemctl restart systemd-journald
 
 # Create systemd service
 echo -e "${GREEN}Creating system service...${NC}"
@@ -92,6 +104,15 @@ Environment=PATH=/opt/piso_wifi/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbi
 ExecStart=/opt/piso_wifi/venv/bin/gunicorn --workers 1 --threads 4 \
     --bind 0.0.0.0:5000 --timeout 60 wsgi:app
 Restart=always
+RestartSec=5
+# Never add --max-requests: recycling the single worker would tear down and
+# rebuild the AP/firewall/metering singletons mid-service.
+# Keep the portal responsive and shield it from the OOM killer (a kill would
+# drop the AP for every user).
+Nice=-5
+OOMScoreAdjust=-500
+# Give atexit time to de-energize the coin relay and release hardware.
+TimeoutStopSec=15
 
 [Install]
 WantedBy=multi-user.target

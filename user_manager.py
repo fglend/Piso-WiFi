@@ -33,11 +33,12 @@ class UserManager:
     def _connect(self):
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
-        # SD-card friendly settings: WAL avoids full journal rewrites on
-        # every commit (the metering loop writes every few seconds), NORMAL
-        # skips redundant fsyncs (still durable for WAL), and busy_timeout
-        # prevents 'database is locked' now that the server is threaded.
-        conn.execute('PRAGMA journal_mode=WAL')
+        # SD-card friendly settings. WAL is a persistent property of the DB
+        # file (set once in _init_db, not re-issued here), so every commit
+        # appends to the WAL instead of rewriting a journal. NORMAL skips
+        # redundant fsyncs (still durable under WAL) and busy_timeout prevents
+        # 'database is locked' now that the server is threaded - both are
+        # per-connection and must be set each time.
         conn.execute('PRAGMA synchronous=NORMAL')
         conn.execute('PRAGMA busy_timeout=5000')
         return conn
@@ -68,6 +69,9 @@ class UserManager:
     def _init_db(self):
         """Initialize database tables (additive migrations only)."""
         conn = self._connect()
+        # WAL persists in the DB file header; setting it once here is enough
+        # for every later connection to inherit it.
+        conn.execute('PRAGMA journal_mode=WAL')
         c = conn.cursor()
         try:
             c.execute('''
