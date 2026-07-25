@@ -83,7 +83,7 @@
     </div>
 
     {% if coinslot_enabled %}
-    <section class="card" aria-labelledby="coin-panel-title">
+    <section class="card" id="coin-panel" aria-labelledby="coin-panel-title">
         <div class="card-head">
             <div>
                 <h2 class="mb-0" id="coin-panel-title">Buy Time With Coins</h2>
@@ -236,6 +236,28 @@
     var lastPesos = 0;
     var hadSession = false;
 
+    // While a session is active, lift the whole coin panel above the
+    // announcement carousel so the countdown/pesos are the first thing the
+    // user sees; drop it back to its normal place when the session ends. The
+    // panel and carousel are siblings, so this is a plain DOM re-parent.
+    var coinPanel = document.getElementById('coin-panel');
+    var coinParent = coinPanel ? coinPanel.parentNode : null;
+    var coinHome = null;
+    if (coinPanel) {
+        coinHome = document.createComment('coin-panel-home');
+        coinParent.insertBefore(coinHome, coinPanel);
+    }
+    function pinCoinPanelTop() {
+        if (coinPanel && coinParent.firstChild !== coinPanel) {
+            coinParent.insertBefore(coinPanel, coinParent.firstChild);
+        }
+    }
+    function unpinCoinPanel() {
+        if (coinPanel && coinHome && coinHome.parentNode) {
+            coinHome.parentNode.insertBefore(coinPanel, coinHome.nextSibling);
+        }
+    }
+
     function setStep(activeStep, doneThrough) {
         steps.forEach(function (step) {
             var number = Number(step.getAttribute('data-step'));
@@ -314,9 +336,12 @@
                 }
                 if (status.active && status.yours) {
                     setActive(status);
+                    pinCoinPanelTop();
                 } else if (status.active) {
                     setBusy();
+                    unpinCoinPanel();
                 } else {
+                    unpinCoinPanel();
                     if (hadSession) {
                         window.setTimeout(function () { window.location.reload(); }, 900);
                     } else {
