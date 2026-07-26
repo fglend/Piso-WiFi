@@ -87,6 +87,12 @@ class TimeManager:
             self.logger.error(f"Error in check_and_deduct_time: {e}")
 
     def _process_device(self, mac, now):
+        if self.user_manager.is_paused(mac):
+            # Manually paused from the portal: keep the clock frozen and the
+            # device blocked. Never self-heal access or deduct while paused.
+            if self.network_controller.is_access_allowed(mac):
+                self.network_controller.block_mac(mac)
+            return
         balance = self.user_manager.check_balance(mac)
 
         if balance <= 0:

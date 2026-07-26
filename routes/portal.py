@@ -2,6 +2,7 @@
 upgrades. The device is always identified by the requesting IP - clients can
 never act on another device's MAC."""
 import logging
+import time
 
 from flask import (Blueprint, abort, current_app, flash, jsonify, redirect,
                    render_template, request, session, url_for)
@@ -50,7 +51,7 @@ def index():
             'time_balance': 0, 'status': 'inactive',
             'download_limit': svc.settings.default_download_kbps,
             'upload_limit': svc.settings.default_upload_kbps,
-            'plan': 'default', 'upgrade_requested': False,
+            'plan': 'default', 'upgrade_requested': False, 'paused': False,
         }
         device = {'mac_address': mac, **info}
     rates = [
@@ -174,4 +175,38 @@ def request_upgrade():
         flash('Premium upgrade requested. Please wait for admin approval.', 'success')
     else:
         flash('Error requesting upgrade', 'error')
+    return redirect(url_for('portal.index'))
+
+
+@portal_bp.route('/pause', methods=['POST'])
+def pause():
+    svc = _services()
+    mac = _client_mac()
+    if not mac:
+        flash('Could not identify your device. Reconnect to the WiFi and try again.', 'error')
+        return redirect(url_for('portal.index'))
+    svc.user_manager.set_paused(mac, True)
+    svc.user_manager.clear_session(mac)      # freeze the deduction clock
+    svc.network_controller.block_mac(mac)    # cut internet while paused
+    flash('Your time is paused. Tap Resume when you are ready to continue.', 'success')
+    return redirect(url_for('portal.index'))
+
+
+@portal_bp.route('/resume', methods=['POST'])
+def resume():
+    svc = _services()
+    mac = _client_mac()
+    if not mac:
+        flash('Could not identify your device. Reconnect to the WiFi and try again.', 'error')
+        return redirect(url_for('portal.index'))
+    info = svc.user_manager.get_device_info(mac)
+    if not info or info['time_balance'] <= 0:
+        flash('You have no time left to resume. Insert coins or redeem a voucher.', 'error')
+        return redirect(url_for('portal.index'))
+    svc.user_manager.set_paused(mac, False)
+    svc.user_manager.set_last_deduction(mac, time.time())  # restart the clock now
+    svc.network_controller.unblock_mac(mac)
+    svc.network_controller.set_bandwidth_limit(
+        mac, info['download_limit'], info['upload_limit'])
+    flash('Welcome back! Your time is running again.', 'success')
     return redirect(url_for('portal.index'))

@@ -204,6 +204,8 @@ class UserManager:
             self._add_column_if_missing(
                 c, 'device_connections', 'missed_polls',
                 'INTEGER NOT NULL DEFAULT 0')
+            self._add_column_if_missing(
+                c, 'users', 'paused', 'INTEGER NOT NULL DEFAULT 0')
 
             # Seed plans
             c.execute('''INSERT OR IGNORE INTO plans (name, download_kbps, upload_kbps)
@@ -547,7 +549,7 @@ class UserManager:
         with self._with_conn('Getting device info') as (conn, out):
             row = conn.execute('''
                 SELECT time_balance, status, download_limit, upload_limit,
-                       plan, upgrade_requested
+                       plan, upgrade_requested, paused
                 FROM users WHERE mac_address = ?
             ''', (mac_address,)).fetchone()
             out.result = dict(row) if row else None
@@ -868,6 +870,23 @@ class UserManager:
             conn.commit()
         finally:
             conn.close()
+
+    def set_paused(self, mac_address, paused):
+        """Manually pause/resume a device's metering. Returns True on success."""
+        with self._with_conn('Setting pause state', default=False) as (conn, out):
+            cursor = conn.execute(
+                'UPDATE users SET paused = ? WHERE mac_address = ?',
+                (1 if paused else 0, mac_address))
+            out.result = cursor.rowcount > 0
+        return out.result
+
+    def is_paused(self, mac_address):
+        with self._with_conn('Reading pause state', default=False) as (conn, out):
+            row = conn.execute(
+                'SELECT paused FROM users WHERE mac_address = ?',
+                (mac_address,)).fetchone()
+            out.result = bool(row['paused']) if row else False
+        return out.result
 
     # --- health -------------------------------------------------------------------
 

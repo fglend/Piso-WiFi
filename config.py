@@ -109,7 +109,10 @@ class Settings:
     # hits zero (up to CHECK_INTERVAL of free browsing). 15s balances that leak
     # against poll cost (each poll spawns `ip neigh` + DB writes) on an SBC.
     check_interval: int = field(default_factory=lambda: _env_int('CHECK_INTERVAL', 15))
-    pause_on_disconnect: bool = field(default_factory=lambda: _env_bool('PAUSE_ON_DISCONNECT', True))
+    # Metering is manual-pause based: a device's clock keeps counting down even
+    # while it is disconnected (only the portal Pause button freezes it), so
+    # this defaults off. Set PAUSE_ON_DISCONNECT=true to auto-freeze on drop.
+    pause_on_disconnect: bool = field(default_factory=lambda: _env_bool('PAUSE_ON_DISCONNECT', False))
 
     # Coinslot (GPIO pulse type, e.g. CH-926 / Weiyu universal)
     coinslot_enabled: bool = field(default_factory=lambda: _env_bool('COINSLOT_ENABLED', False))

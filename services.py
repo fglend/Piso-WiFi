@@ -105,7 +105,10 @@ class Services:
 
     def handle_new_device(self, mac_address):
         info = self.user_manager.get_device_info(mac_address)
-        if info and info['time_balance'] > 0:
+        if info and info.get('paused'):
+            logger.info(f"Known device {mac_address} is paused, keeping it blocked")
+            self.network_controller.block_mac(mac_address)
+        elif info and info['time_balance'] > 0:
             logger.info(f"Known device {mac_address} has balance, restoring access")
             self.network_controller.unblock_mac(mac_address)
             self.network_controller.set_bandwidth_limit(

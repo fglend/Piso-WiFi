@@ -49,12 +49,28 @@
             <h1 class="mb-0">{{ portal_title }}</h1>
             <div class="muted small text-break">{{ device.mac_address }}</div>
         </div>
-        {% if device.time_balance <= 0 %}
+        {% if device.paused %}
+            <span class="badge badge-warn">Time paused</span>
+        {% elif device.time_balance <= 0 %}
             <span class="badge badge-danger">No internet access</span>
         {% else %}
             <span class="badge badge-ok">Internet active</span>
         {% endif %}
     </div>
+
+    {% if device.paused %}
+    <form action="{{ url_for('portal.resume') }}" method="POST" class="mb-4">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="btn btn-primary">Resume my time</button>
+        <span class="muted small">Your internet is paused and no minutes are being used.</span>
+    </form>
+    {% elif device.time_balance > 0 %}
+    <form action="{{ url_for('portal.pause') }}" method="POST" class="mb-4">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="btn btn-ghost">Pause my time</button>
+        <span class="muted small">Stops the countdown and your internet until you resume.</span>
+    </form>
+    {% endif %}
 
     <div class="grid grid-3 mb-4">
         <div class="metric metric-hero">
