@@ -203,10 +203,6 @@
             </div>
 
             <div class="coin-modal-actions">
-                <form action="{{ url_for('portal.insert_coin') }}" method="POST" class="mb-0">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                    <button type="submit" class="btn btn-primary">Extend session</button>
-                </form>
                 <button type="button" class="btn btn-ghost" id="coin-modal-close">Hide</button>
             </div>
         </div>
