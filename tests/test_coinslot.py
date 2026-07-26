@@ -100,6 +100,19 @@ def test_multi_pulse_coin_credits_once_after_burst(user_manager, mock_network,
     assert svc.status(MAC)['pesos_inserted'] == 5
 
 
+def test_release_credits_pending_and_ends_session(user_manager, mock_network, settings):
+    relay = FakeRelay()
+    svc = make_service(user_manager, mock_network, settings, relay=relay)
+    svc.claim(MAC)
+    svc._count_pulse()  # counted but not yet flushed (within the settle gap)
+
+    assert svc.release(OTHER_MAC) is False        # only the owner can end it
+    assert svc.release(MAC) is True
+    assert user_manager.check_balance(MAC) == 10  # the pending ₱1 was credited
+    assert relay.active is False                  # acceptor power cut
+    assert svc.status(MAC) == {'active': False}
+
+
 def test_claim_is_exclusive(user_manager, mock_network, settings):
     svc = make_service(user_manager, mock_network, settings)
     assert svc.claim(MAC) is not None

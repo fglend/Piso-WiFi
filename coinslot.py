@@ -159,6 +159,26 @@ class CoinslotService:
             self.logger.info(f"Coinslot claimed by {mac_address}")
             return self.settings.coinslot_claim_timeout
 
+    def release(self, mac_address):
+        """End the active claim if it belongs to this device (the portal's
+        "Done payment" action). Credits any pulses that were counted but not
+        yet flushed, cuts acceptor power, and frees the slot. Returns True when
+        a session was actually ended.
+        """
+        with self._lock:
+            if not self._claim or self._claim['mac'] != mac_address:
+                return False
+            # Force pending pulses to settle so a coin dropped just before
+            # tapping Done is still credited before the claim is torn down.
+            self._claim['last_pulse'] = 0.0
+        self._flush_credit_if_settled()
+        with self._lock:
+            if self._claim and self._claim['mac'] == mac_address:
+                self._claim = None
+                self._set_relay(False)
+        self.logger.info(f"Coinslot session ended by {mac_address}")
+        return True
+
     def status(self, mac_address=None):
         with self._lock:
             now = time.monotonic()

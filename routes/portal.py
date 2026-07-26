@@ -152,6 +152,20 @@ def insert_coin():
     return redirect(url_for('portal.index'))
 
 
+@portal_bp.route('/coin_done', methods=['POST'])
+def coin_done():
+    svc = _services()
+    if not svc.coinslot:
+        return redirect(url_for('portal.index'))
+    mac = _client_mac()
+    if not mac:
+        flash('Could not identify your device. Reconnect to the WiFi and try again.', 'error')
+        return redirect(url_for('portal.index'))
+    if svc.coinslot.release(mac):
+        flash('Coin session ended. Enjoy your time!', 'success')
+    return redirect(url_for('portal.index'))
+
+
 @portal_bp.route('/coin_status')
 def coin_status():
     svc = _services()
