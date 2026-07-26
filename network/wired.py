@@ -70,33 +70,53 @@ class WiredGateway(APManager):
             self.logger.error(f"Error checking gateway status: {e}")
             return False
 
-    def _neighbor_states(self):
-        """{MAC: state} for entries on the LAN interface."""
-        states = {}
+    def _neighbor_entries(self):
+        """{MAC: {'ip', 'state'}} for entries on the LAN interface.
+
+        The IP is captured too so a device that is reachable but whose DHCP
+        lease has lapsed (or that uses a static IP) can still be reported - the
+        kernel neighbor table, not the leases file, is the authority on who is
+        present on the LAN right now.
+        """
+        entries = {}
         try:
             output = run_cmd(['ip', 'neigh', 'show', 'dev', self.ap_interface])
             for line in output.splitlines():
                 parts = line.split()
-                if 'lladdr' in parts:
+                if parts and 'lladdr' in parts:
                     mac = parts[parts.index('lladdr') + 1].upper()
-                    states[mac] = parts[-1]
+                    entries[mac] = {'ip': parts[0], 'state': parts[-1]}
         except Exception as e:
             self.logger.warning(f"Neighbor table read failed: {e}")
             return None
-        return states
+        return entries
 
     def get_stations(self):
-        stations = []
-        neigh = self._neighbor_states()
+        """Devices present on the LAN, driven by the neighbor table so a
+        reachable client is metered and shown even if its DHCP lease has lapsed
+        (the coin/portal path already identifies devices via the neighbor
+        table, so lease-only discovery would silently drop such a device).
+        Lease data enriches an entry's hostname/IP when available; otherwise the
+        neighbor's own IP is used.
+        """
+        neigh = self._neighbor_entries()
         if neigh is None:
             raise RuntimeError("Could not read the LAN neighbor table")
-        for mac, lease in self.get_dhcp_leases(strict=True).items():
-            state = neigh.get(mac)
-            if state in ACTIVE_NEIGH_STATES:
-                stations.append({
-                    'mac_address': mac,
-                    'ip': lease['ip'],
-                    'hostname': lease['hostname'],
-                    'connected': True,
-                })
+        # Best-effort (non-strict) so discovery survives an unreadable or
+        # empty leases file instead of dropping every device.
+        leases = self.get_dhcp_leases()
+        subnet_prefix = '.'.join(self.ip.split('.')[:3]) + '.'
+        stations = []
+        for mac, entry in neigh.items():
+            if entry['state'] not in ACTIVE_NEIGH_STATES:
+                continue
+            if not entry['ip'].startswith(subnet_prefix):
+                continue
+            lease = leases.get(mac, {})
+            stations.append({
+                'mac_address': mac,
+                'ip': lease.get('ip', entry['ip']),
+                'hostname': lease.get('hostname', 'Unknown'),
+                'connected': True,
+            })
         return stations

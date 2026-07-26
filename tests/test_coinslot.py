@@ -256,6 +256,20 @@ def test_wired_gateway_station_discovery(settings):
     assert stations[0]['ip'] == '192.168.4.2'
 
 
+def test_wired_gateway_reports_reachable_device_without_lease(settings):
+    """A device reachable on the LAN must be reported even with no DHCP lease
+    (expired lease or static IP), else it is neither metered nor shown."""
+    settings.network_mode = 'wired'
+    gw = WiredGateway(settings)
+    neigh_output = f"192.168.4.50 lladdr {MAC.lower()} REACHABLE\n"
+    with patch.object(gw, 'get_dhcp_leases', return_value={}), \
+         patch('network.wired.run_cmd', return_value=neigh_output):
+        stations = gw.get_stations()
+    assert [s['mac_address'] for s in stations] == [MAC]
+    assert stations[0]['ip'] == '192.168.4.50'
+    assert stations[0]['hostname'] == 'Unknown'
+
+
 def test_wired_gateway_skips_nmcli_when_it_is_not_installed(settings):
     gateway = WiredGateway(settings)
     with patch('network.wired.command_exists', return_value=False), \
