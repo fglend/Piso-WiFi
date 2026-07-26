@@ -14,26 +14,45 @@
 
 <div class="card">
     <div class="card-body">
-        <form action="{{ url_for('admin.vouchers') }}" method="POST" class="form-row">
+        <form action="{{ url_for('admin.vouchers') }}" method="POST" class="stack">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <input type="hidden" name="mode" value="minutes">
-            <div style="max-width: 200px;">
+            <div style="max-width: 320px;">
+                <label for="voucher-type">Voucher type</label>
+                <select id="voucher-type" name="mode">
+                    <option value="minutes">Free Voucher</option>
+                    <option value="price">Paid Voucher</option>
+                    <option value="custom">Custom Voucher &mdash; specific price for specific hours</option>
+                </select>
+            </div>
+
+            <div class="voucher-field" data-mode="minutes" style="max-width: 200px;">
                 <label for="voucher-minutes">Free voucher (minutes)</label>
                 <input type="number" id="voucher-minutes" name="minutes" min="1" step="any" placeholder="e.g. 30" required>
             </div>
-            <button type="submit" class="btn btn-primary">Create Free Voucher</button>
-        </form>
-        <form action="{{ url_for('admin.vouchers') }}" method="POST" class="form-row mt-2">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <input type="hidden" name="mode" value="price">
-            <div style="max-width: 200px;">
+
+            <div class="voucher-field" data-mode="price" style="max-width: 200px;" hidden>
                 <label for="voucher-price">Paid voucher (price ₱)</label>
-                <input type="number" id="voucher-price" name="price" min="1" step="1" placeholder="e.g. 10" required>
+                <input type="number" id="voucher-price" name="price" min="1" step="1" placeholder="e.g. 10" disabled>
             </div>
-            <button type="submit" class="btn btn-primary">Create Paid Voucher</button>
+
+            <div class="voucher-field" data-mode="custom" hidden>
+                <div class="form-row">
+                    <div style="max-width: 200px;">
+                        <label for="voucher-custom-price">Custom price (₱)</label>
+                        <input type="number" id="voucher-custom-price" name="custom_price" min="1" step="any" placeholder="e.g. 25" disabled>
+                    </div>
+                    <div style="max-width: 200px;">
+                        <label for="voucher-custom-hours">Duration (hours)</label>
+                        <input type="number" id="voucher-custom-hours" name="custom_hours" min="0.25" step="any" placeholder="e.g. 3" disabled>
+                    </div>
+                </div>
+            </div>
+
+            <button type="submit" class="btn btn-primary">Create Voucher</button>
         </form>
-        <p class="muted small mb-0">Paid vouchers convert pesos to minutes with the
-            rate table and are recorded as revenue when created; free vouchers are not.</p>
+        <p class="muted small mb-0 mt-2">Paid and custom vouchers are recorded as revenue
+            when created; free vouchers are not. Custom vouchers set an exact price for an
+            exact number of hours, ignoring the rate table.</p>
     </div>
 </div>
 
@@ -67,4 +86,26 @@
         </table>
     </div>
 </div>
+
+<script>
+(function () {
+    var typeSelect = document.getElementById('voucher-type');
+    if (!typeSelect) return;
+    var fields = Array.prototype.slice.call(document.querySelectorAll('.voucher-field'));
+    function sync() {
+        fields.forEach(function (field) {
+            var active = field.getAttribute('data-mode') === typeSelect.value;
+            field.hidden = !active;
+            // Disable inactive inputs so they are neither submitted nor able to
+            // block submit via a stale `required` on a hidden field.
+            Array.prototype.slice.call(field.querySelectorAll('input')).forEach(function (input) {
+                input.disabled = !active;
+                input.required = active;
+            });
+        });
+    }
+    typeSelect.addEventListener('change', sync);
+    sync();
+})();
+</script>
 {% endblock %}

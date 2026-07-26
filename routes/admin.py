@@ -451,6 +451,20 @@ def delete_rate():
 def vouchers():
     svc = _services()
     if request.method == 'POST':
+        if request.form.get('mode') == 'custom':
+            price = _form_number('custom_price', minimum=1, cast=float)
+            hours = _form_number('custom_hours', minimum=0, cast=float)
+            if price is None or not hours or hours <= 0:
+                flash('Enter a valid price and duration in hours', 'error')
+                return redirect(url_for('admin.vouchers'))
+            minutes = round(hours * 60, 2)
+            code = svc.user_manager.create_voucher(minutes, price=price)
+            if code:
+                flash(f'Custom voucher created: {code} '
+                      f'(₱{price:g} = {hours:g} hour(s), {minutes:g} min)', 'success')
+            else:
+                flash('Error creating voucher', 'error')
+            return redirect(url_for('admin.vouchers'))
         if request.form.get('mode') == 'price':
             price = _form_number('price', minimum=1)
             if price is None:
