@@ -173,6 +173,66 @@
             </div>
         </div>
     </section>
+
+    <div class="coin-modal" id="coin-modal" hidden role="dialog" aria-modal="true"
+         aria-labelledby="coin-modal-title">
+        <div class="coin-modal-backdrop"></div>
+        <div class="coin-modal-card card" role="document">
+            <div class="metric-label">Coin session</div>
+            <h2 class="mb-0" id="coin-modal-title">Insert coins now</h2>
+            <p class="muted small" id="coin-modal-detail">Drop your coins now - this session is yours.</p>
+
+            <div class="coin-modal-countdown" aria-live="polite">
+                <span id="coin-modal-seconds">0</span><span class="coin-modal-unit">s</span>
+            </div>
+            <div class="muted small mb-3">left before the slot frees up</div>
+
+            <div class="coin-modal-stats">
+                <div class="coin-stat">
+                    <div class="metric-label">Pesos inserted</div>
+                    <div class="coin-stat-value" id="coin-modal-pesos">₱0</div>
+                </div>
+                <div class="coin-stat">
+                    <div class="metric-label">Time added</div>
+                    <div class="coin-stat-value" id="coin-modal-minutes">0 min</div>
+                </div>
+            </div>
+
+            <div class="flash flash-success mb-3 d-none" id="coin-modal-alert">
+                Coin detected. Your minutes were added.
+            </div>
+
+            <div class="coin-modal-actions">
+                <form action="{{ url_for('portal.insert_coin') }}" method="POST" class="mb-0">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="btn btn-primary">Extend session</button>
+                </form>
+                <button type="button" class="btn btn-ghost" id="coin-modal-close">Hide</button>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        .coin-modal { position: fixed; inset: 0; z-index: 1000; display: flex;
+            align-items: center; justify-content: center; padding: 1rem; }
+        .coin-modal[hidden] { display: none; }
+        .coin-modal-backdrop { position: absolute; inset: 0;
+            background: rgba(0, 0, 0, 0.6); }
+        .coin-modal-card { position: relative; width: 100%; max-width: 420px;
+            text-align: center; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4); }
+        .coin-modal-countdown { font-size: 3.25rem; font-weight: 800; line-height: 1;
+            margin-top: 0.75rem; color: var(--accent, #2563eb); }
+        .coin-modal-unit { font-size: 1.5rem; font-weight: 700; opacity: 0.7; }
+        .coin-modal-stats { display: grid; grid-template-columns: 1fr 1fr;
+            gap: 0.75rem; margin-bottom: 0.5rem; }
+        .coin-stat { border: 1px solid rgba(37, 99, 235, 0.25);
+            background: rgba(37, 99, 235, 0.08); border-radius: 12px; padding: 0.75rem; }
+        .coin-stat-value { font-size: 1.6rem; font-weight: 700; }
+        .coin-modal-actions { display: flex; gap: 0.5rem; justify-content: center; }
+        .coin-pulse { animation: coinPulse 0.5s ease; }
+        @keyframes coinPulse { 0% { transform: scale(1); }
+            45% { transform: scale(1.18); } 100% { transform: scale(1); } }
+    </style>
     {% endif %}
 
     <div class="grid grid-2">
@@ -252,26 +312,35 @@
     var lastPesos = 0;
     var hadSession = false;
 
-    // While a session is active, lift the whole coin panel above the
-    // announcement carousel so the countdown/pesos are the first thing the
-    // user sees; drop it back to its normal place when the session ends. The
-    // panel and carousel are siblings, so this is a plain DOM re-parent.
-    var coinPanel = document.getElementById('coin-panel');
-    var coinParent = coinPanel ? coinPanel.parentNode : null;
-    var coinHome = null;
-    if (coinPanel) {
-        coinHome = document.createComment('coin-panel-home');
-        coinParent.insertBefore(coinHome, coinPanel);
+    // Modal that surfaces the live session (countdown + pesos + minutes) over
+    // the portal while a coin session is active for this device.
+    var modal = document.getElementById('coin-modal');
+    var modalTitle = document.getElementById('coin-modal-title');
+    var modalDetail = document.getElementById('coin-modal-detail');
+    var modalSeconds = document.getElementById('coin-modal-seconds');
+    var modalPesos = document.getElementById('coin-modal-pesos');
+    var modalMinutes = document.getElementById('coin-modal-minutes');
+    var modalAlert = document.getElementById('coin-modal-alert');
+    var modalClose = document.getElementById('coin-modal-close');
+    var modalDismissed = false;
+
+    function openModal() {
+        if (modal && !modalDismissed) modal.hidden = false;
     }
-    function pinCoinPanelTop() {
-        if (coinPanel && coinParent.firstChild !== coinPanel) {
-            coinParent.insertBefore(coinPanel, coinParent.firstChild);
-        }
+    function closeModal() {
+        if (modal) modal.hidden = true;
     }
-    function unpinCoinPanel() {
-        if (coinPanel && coinHome && coinHome.parentNode) {
-            coinHome.parentNode.insertBefore(coinPanel, coinHome.nextSibling);
-        }
+    function pulse(el) {
+        if (!el) return;
+        el.classList.remove('coin-pulse');
+        void el.offsetWidth;   // restart the CSS animation
+        el.classList.add('coin-pulse');
+    }
+    if (modalClose) {
+        modalClose.addEventListener('click', function () {
+            modalDismissed = true;
+            closeModal();
+        });
     }
 
     function setStep(activeStep, doneThrough) {
@@ -305,16 +374,23 @@
         pesosInserted.textContent = '₱0';
         minutesAdded.textContent = '0';
         setStep(2, 1);
+        closeModal();
+        modalDismissed = false;   // let the next session pop the modal again
     }
 
-    function setBusy() {
+    function setBusy(status) {
+        // Another device holds the slot: show everyone the shared countdown so
+        // they know how long until a new session can be started.
+        var secs = Math.max(0, (status && status.seconds_left) || 0);
         title.textContent = 'Coin slot is busy';
-        detail.textContent = 'Another device is using the slot. Wait for their countdown to finish.';
-        setBadge('One at a time', 'text-bg-warning');
+        detail.textContent = 'A new session opens in about ' + secs
+            + (secs === 1 ? ' second.' : ' seconds.');
+        setBadge(secs + 's left', 'text-bg-warning');
         claimButton.disabled = true;
         claimButton.textContent = 'Wait for slot';
-        setProgress(0);
+        setProgress(secs);
         setStep(2, 1);
+        closeModal();
     }
 
     function setActive(status) {
@@ -322,6 +398,7 @@
         var pesos = Number(status.pesos_inserted || 0);
         // server-computed from the tier table, not a flat per-peso rate
         var insertedMinutes = Number(status.minutes_added || 0);
+        var seconds = Math.max(0, status.seconds_left || 0);
         title.textContent = pesos > 0 ? 'Coin detected' : 'Insert coins now';
         detail.textContent = pesos > 0
             ? 'Your balance updated. Add more coins before the timer ends, or start browsing.'
@@ -329,17 +406,34 @@
         setBadge('Your turn', 'text-bg-success');
         claimButton.disabled = false;
         claimButton.textContent = 'Extend session';
-        setProgress(status.seconds_left || 0);
-        pesosInserted.textContent = '₱' + pesos.toLocaleString();
-        minutesAdded.textContent = insertedMinutes.toLocaleString(undefined, {
+        setProgress(seconds);
+        var pesoText = '₱' + pesos.toLocaleString();
+        var minuteText = insertedMinutes.toLocaleString(undefined, {
             maximumFractionDigits: 1
         });
+        pesosInserted.textContent = pesoText;
+        minutesAdded.textContent = minuteText;
         balance.textContent = Number(status.balance || 0).toFixed(1);
+
+        // Modal: the highlighted live view of the session.
+        modalTitle.textContent = pesos > 0 ? 'Coin detected!' : 'Insert coins now';
+        modalDetail.textContent = pesos > 0
+            ? 'Keep dropping coins before the countdown ends.'
+            : 'Drop your coins now - this session is yours.';
+        modalSeconds.textContent = seconds;
+        if (modalPesos.textContent !== pesoText) pulse(modalPesos);
+        modalPesos.textContent = pesoText;
+        var modalMinuteText = minuteText + ' min';
+        if (modalMinutes.textContent !== modalMinuteText) pulse(modalMinutes);
+        modalMinutes.textContent = modalMinuteText;
 
         if (pesos > lastPesos) {
             detectedAlert.classList.remove('d-none');
+            if (modalAlert) modalAlert.classList.remove('d-none');
+            pulse(modalSeconds);
         }
         lastPesos = pesos;
+        openModal();
         setStep(pesos > 0 ? 5 : 3, pesos > 0 ? 4 : 2);
     }
 
@@ -352,12 +446,10 @@
                 }
                 if (status.active && status.yours) {
                     setActive(status);
-                    pinCoinPanelTop();
                 } else if (status.active) {
-                    setBusy();
-                    unpinCoinPanel();
+                    setBusy(status);
                 } else {
-                    unpinCoinPanel();
+                    closeModal();
                     if (hadSession) {
                         window.setTimeout(function () { window.location.reload(); }, 900);
                     } else {
