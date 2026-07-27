@@ -19,6 +19,11 @@ class UserManager:
     def __init__(self, db_path='config/piso_wifi.db'):
         self.db_path = db_path
         self.logger = logging.getLogger(__name__)
+        # Per-deduction INFO logging floods journald (one line per device per
+        # minute). Disable with LOG_DEDUCTIONS=false; the time_logs table keeps
+        # the authoritative audit trail either way.
+        self.log_deductions = os.getenv(
+            'LOG_DEDUCTIONS', 'true').strip().lower() in ('1', 'true', 'yes', 'on')
 
         directory = os.path.dirname(db_path)
         if directory:
@@ -532,9 +537,10 @@ class UserManager:
                   'manual' if manual else 'auto'))
 
             conn.commit()
-            self.logger.info(
-                f"Deducted {minutes} minutes from {mac_address}. "
-                f"Balance: {current_balance} -> {new_balance}")
+            if self.log_deductions:
+                self.logger.info(
+                    f"Deducted {minutes} minutes from {mac_address}. "
+                    f"Balance: {current_balance} -> {new_balance}")
             return True
         except Exception as e:
             self.logger.error(f"Error deducting time: {e}")
