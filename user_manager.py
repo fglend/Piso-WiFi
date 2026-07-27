@@ -847,6 +847,16 @@ class UserManager:
             }
         return out.result
 
+    def reset_revenue(self):
+        """Zero all revenue by clearing the transactions ledger. Device
+        balances, vouchers and time_logs are untouched. Returns the number of
+        rows removed. Irreversible - the revenue audit trail is discarded.
+        """
+        with self._with_conn('Resetting revenue', default=0) as (conn, out):
+            out.result = conn.execute('DELETE FROM transactions').rowcount
+        self.logger.info("Revenue reset: cleared %s transaction row(s)", out.result)
+        return out.result
+
     # --- session persistence (deduction clock) ----------------------------------
 
     def get_last_deduction(self, mac_address):

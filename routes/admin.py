@@ -181,6 +181,15 @@ def update_settings():
     return redirect(url_for('admin.update_settings'))
 
 
+@admin_bp.route('/admin/revenue/reset', methods=['POST'])
+@admin_required
+def reset_revenue():
+    svc = _services()
+    removed = svc.user_manager.reset_revenue()
+    flash(f'Revenue reset to zero ({removed} record(s) cleared).', 'success')
+    return redirect(url_for('admin.update_settings'))
+
+
 @admin_bp.route('/add_time', methods=['POST'])
 @admin_required
 def add_time():

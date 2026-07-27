@@ -74,4 +74,28 @@
         </form>
     </div>
 </div>
+
+<div class="card">
+    <div class="card-head">
+        <h2 class="mb-0">Danger Zone</h2>
+    </div>
+    <div class="card-body">
+        <div class="row-between">
+            <div>
+                <h3 class="mb-0">Reset revenue</h3>
+                <p class="muted small mb-0">Sets today/week/month revenue back to zero by
+                    clearing the revenue ledger. Device balances, vouchers and time logs are
+                    kept. This cannot be undone.</p>
+            </div>
+            <form action="{{ url_for('admin.reset_revenue') }}" method="POST" class="mb-0"
+                  onsubmit="return confirm('Reset ALL revenue to zero? This clears the revenue ledger and cannot be undone.');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="btn btn-danger"
+                        style="background:#dc2626;border-color:#dc2626;color:#fff;">
+                    Reset Revenue
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
 {% endblock %}
