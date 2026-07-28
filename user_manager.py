@@ -13,6 +13,10 @@ MAC_ADDRESS_RE = re.compile(r'^(?:[0-9A-F]{2}:){5}[0-9A-F]{2}$')
 CONNECTION_HISTORY_DAYS = 30
 MAX_CLOSED_CONNECTIONS = 2000
 DISCONNECT_CONFIRMATION_POLLS = 2
+# How stale a connected device's last_seen_at may get before it is rewritten.
+# The dashboard shows this at minute granularity, so refreshing it on every
+# few-second poll buys no visible accuracy and costs a disk write per device.
+LAST_SEEN_REFRESH_SECONDS = 60
 
 
 class UserManager:
@@ -203,6 +207,18 @@ class UserManager:
                     (mac_address, disconnected_at DESC, id DESC)
             ''')
 
+            # The dashboard polls revenue on a timer and the history view sorts
+            # by recency; without these both full-scan a table that grows with
+            # every coin inserted.
+            c.execute('''
+                CREATE INDEX IF NOT EXISTS idx_transactions_created_at
+                ON transactions (created_at DESC)
+            ''')
+            c.execute('''
+                CREATE INDEX IF NOT EXISTS idx_time_logs_deducted_at
+                ON time_logs (deducted_at)
+            ''')
+
             # Additive column migrations for databases created by older versions
             self._add_column_if_missing(c, 'transactions', 'source', "TEXT DEFAULT 'cash'")
             self._add_column_if_missing(c, 'vouchers', 'price', 'REAL DEFAULT 0')
@@ -254,7 +270,15 @@ class UserManager:
         return mac, {'hostname': hostname, 'ip_address': ip_address}
 
     def sync_connection_snapshot(self, devices):
-        """Persist one open session per present MAC and close absent sessions."""
+        """Persist one open session per present MAC and close absent sessions.
+
+        Called on every discovery poll, so it is written to touch the disk only
+        when something actually changed. A steady room of connected phones
+        produces zero writes between last_seen refreshes; blindly stamping
+        last_seen_at every poll dirtied a page per device per poll, which on an
+        SD-card-rooted Pi is the single largest source of continuous wear.
+        Retention trimming lives in prune_history(), on an hourly schedule.
+        """
         normalized = [
             self._normalize_connection_device(dict(device))
             for device in devices
@@ -263,56 +287,52 @@ class UserManager:
         conn = self._connect()
         try:
             conn.execute('BEGIN IMMEDIATE')
+            open_rows = {
+                row['mac_address']: row
+                for row in conn.execute('''
+                    SELECT mac_address, hostname, ip_address, missed_polls,
+                           (last_seen_at <= datetime('now', ?)) AS stale
+                    FROM device_connections
+                    WHERE disconnected_at IS NULL
+                ''', (f'-{LAST_SEEN_REFRESH_SECONDS} seconds',))
+            }
+
             for mac, device in devices_by_mac.items():
-                cursor = conn.execute('''
-                    UPDATE device_connections
-                    SET hostname = ?, ip_address = ?,
-                        last_seen_at = CURRENT_TIMESTAMP, missed_polls = 0
-                    WHERE mac_address = ? AND disconnected_at IS NULL
-                ''', (device['hostname'], device['ip_address'], mac))
-                if cursor.rowcount == 0:
+                existing = open_rows.get(mac)
+                if existing is None:
                     conn.execute('''
                         INSERT INTO device_connections
                             (mac_address, hostname, ip_address)
                         VALUES (?, ?, ?)
                     ''', (mac, device['hostname'], device['ip_address']))
+                elif (existing['missed_polls'] or existing['stale']
+                        or existing['hostname'] != device['hostname']
+                        or existing['ip_address'] != device['ip_address']):
+                    conn.execute('''
+                        UPDATE device_connections
+                        SET hostname = ?, ip_address = ?,
+                            last_seen_at = CURRENT_TIMESTAMP, missed_polls = 0
+                        WHERE mac_address = ? AND disconnected_at IS NULL
+                    ''', (device['hostname'], device['ip_address'], mac))
 
-            present_macs = tuple(devices_by_mac)
-            if present_macs:
-                placeholders = ','.join('?' for _ in present_macs)
+            absent_macs = tuple(
+                mac for mac in open_rows if mac not in devices_by_mac)
+            if absent_macs:
+                placeholders = ','.join('?' for _ in absent_macs)
                 conn.execute(f'''
                     UPDATE device_connections
                     SET missed_polls = missed_polls + 1
                     WHERE disconnected_at IS NULL
-                      AND mac_address NOT IN ({placeholders})
-                ''', present_macs)
-            else:
-                conn.execute('''
+                      AND mac_address IN ({placeholders})
+                ''', absent_macs)
+                conn.execute(f'''
                     UPDATE device_connections
-                    SET missed_polls = missed_polls + 1
+                    SET disconnected_at = CURRENT_TIMESTAMP
                     WHERE disconnected_at IS NULL
-                ''')
-            conn.execute('''
-                UPDATE device_connections
-                SET disconnected_at = CURRENT_TIMESTAMP
-                WHERE disconnected_at IS NULL AND missed_polls >= ?
-            ''', (DISCONNECT_CONFIRMATION_POLLS,))
+                      AND missed_polls >= ?
+                      AND mac_address IN ({placeholders})
+                ''', (DISCONNECT_CONFIRMATION_POLLS, *absent_macs))
 
-            conn.execute('''
-                DELETE FROM device_connections
-                WHERE disconnected_at IS NOT NULL
-                  AND disconnected_at < datetime('now', ?)
-            ''', (f'-{CONNECTION_HISTORY_DAYS} days',))
-            conn.execute('''
-                DELETE FROM device_connections
-                WHERE disconnected_at IS NOT NULL
-                  AND id NOT IN (
-                      SELECT id FROM device_connections
-                      WHERE disconnected_at IS NOT NULL
-                      ORDER BY disconnected_at DESC, id DESC
-                      LIMIT ?
-                  )
-            ''', (MAX_CLOSED_CONNECTIONS,))
             conn.commit()
             return True
         except Exception as exc:
@@ -321,6 +341,40 @@ class UserManager:
             return False
         finally:
             conn.close()
+
+    def prune_history(self, time_log_days=CONNECTION_HISTORY_DAYS):
+        """Trim the append-only history tables. Hourly housekeeping, not a
+        per-poll cost: the closed-connection cap sorts the whole closed set,
+        which has no business running every few seconds.
+
+        time_logs is write-only audit data that grows by one row per device
+        per minute - left alone it is the fastest-growing table in the DB.
+        """
+        with self._with_conn('Pruning history', default=0) as (conn, out):
+            removed = conn.execute('''
+                DELETE FROM device_connections
+                WHERE disconnected_at IS NOT NULL
+                  AND disconnected_at < datetime('now', ?)
+            ''', (f'-{CONNECTION_HISTORY_DAYS} days',)).rowcount
+            removed += conn.execute('''
+                DELETE FROM device_connections
+                WHERE disconnected_at IS NOT NULL
+                  AND id NOT IN (
+                      SELECT id FROM device_connections
+                      WHERE disconnected_at IS NOT NULL
+                      ORDER BY disconnected_at DESC, id DESC
+                      LIMIT ?
+                  )
+            ''', (MAX_CLOSED_CONNECTIONS,)).rowcount
+            if time_log_days > 0:
+                removed += conn.execute('''
+                    DELETE FROM time_logs WHERE deducted_at < datetime('now', ?)
+                ''', (f'-{int(time_log_days)} days',)).rowcount
+            out.result = max(removed, 0)
+
+        if out.result:
+            self.logger.info(f"Pruned {out.result} history row(s)")
+        return out.result
 
     def get_disconnected_devices(self, limit=100):
         safe_limit = max(1, min(int(limit), 500))
@@ -914,6 +968,14 @@ class UserManager:
                     END), 0) AS month
                 FROM transactions
                 WHERE amount != 0
+                  -- Only rows that can land in one of the three buckets. The
+                  -- dashboard re-runs this on a timer, and without a bound it
+                  -- rescans every transaction ever recorded. Comparing the raw
+                  -- UTC column (not datetime(created_at,'localtime')) is what
+                  -- lets idx_transactions_created_at do the work.
+                  AND created_at >= datetime(MIN(
+                        datetime('now', 'localtime', 'start of month'),
+                        datetime('now', 'localtime', '-6 days')), 'utc')
             ''').fetchone()
             out.result = {
                 'day': float(row['day']),

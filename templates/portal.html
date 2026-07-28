@@ -474,13 +474,19 @@
         setStep(pesos > 0 ? 5 : 3, pesos > 0 ? 4 : 2);
     }
 
+    var currentPace = 6000;
+
     function poll() {
         fetch(statusUrl, {headers: {'Accept': 'application/json'}})
             .then(function (response) { return response.json(); })
             .then(function (status) {
                 if (!status.enabled) {
+                    stop();
                     return;
                 }
+                // Fast cadence only while a coin session is running
+                currentPace = status.active ? ACTIVE_MS : IDLE_MS;
+                if (!document.hidden) schedule(currentPace);
                 if (status.active && status.yours) {
                     setActive(status);
                 } else if (status.active) {
@@ -501,9 +507,40 @@
             });
     }
 
+    // Adaptive polling. Every phone parked on this page is a request every
+    // interval against a single-core-bound Flask worker on the Pi, so only
+    // poll fast while a coin session is actually live, and stop entirely
+    // while the page is hidden (a phone in a pocket polled all day otherwise).
+    var ACTIVE_MS = 1500;
+    var IDLE_MS = 6000;
+    var timer = null;
+    var currentMs = null;
+
+    function schedule(ms) {
+        if (timer !== null && currentMs === ms) return;
+        if (timer !== null) window.clearInterval(timer);
+        currentMs = ms;
+        timer = window.setInterval(poll, ms);
+    }
+
+    function stop() {
+        if (timer !== null) window.clearInterval(timer);
+        timer = null;
+        currentMs = null;
+    }
+
+    document.addEventListener('visibilitychange', function () {
+        if (document.hidden) {
+            stop();
+        } else {
+            poll();
+            schedule(currentPace);
+        }
+    });
+
     setIdle();
     poll();
-    window.setInterval(poll, 1500);
+    schedule(currentPace);
 })();
 </script>
 {% endif %}

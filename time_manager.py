@@ -92,18 +92,26 @@ class TimeManager:
             self.logger.error(f"Error in check_and_deduct_time: {e}")
 
     def _purge_stale_devices(self):
-        """Drop spent, long-idle device rows. Runs hourly - the meter loop
-        polls every few seconds and this is housekeeping, not metering."""
-        if self.device_retention_hours <= 0:
-            return
+        """Drop spent, long-idle device rows and trim the history tables.
+
+        Runs hourly - the meter loop polls every few seconds and this is
+        housekeeping, not metering. Each step is guarded separately so a
+        failure in one does not skip the other.
+        """
         now = time.time()
         if now < self._next_purge_at:
             return
         self._next_purge_at = now + self.PURGE_INTERVAL_SECONDS
+
+        if self.device_retention_hours > 0:
+            try:
+                self.user_manager.purge_stale_devices(self.device_retention_hours)
+            except Exception as e:
+                self.logger.error(f"Error purging stale devices: {e}")
         try:
-            self.user_manager.purge_stale_devices(self.device_retention_hours)
+            self.user_manager.prune_history()
         except Exception as e:
-            self.logger.error(f"Error purging stale devices: {e}")
+            self.logger.error(f"Error pruning history: {e}")
 
     def _process_device(self, mac, now):
         if self.user_manager.is_paused(mac):

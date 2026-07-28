@@ -2,7 +2,7 @@ import atexit
 import logging
 import os
 
-from flask import Flask
+from flask import Flask, url_for
 
 from auth import init_csrf
 from config import load_settings
@@ -39,6 +39,23 @@ def create_app(services=None, start_time_manager=True, manage_hardware=True, set
     app.secret_key = services.settings.secret_key
     app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024
     app.extensions['piso'] = services
+
+    # Captive-portal phones reload this page constantly; without a far-future
+    # expiry each load revalidates the stylesheet against the single worker.
+    # The mtime query string is what makes that safe - a deployed CSS change
+    # gets a new URL instead of sitting stale in every phone's cache.
+    app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 30 * 24 * 60 * 60
+
+    @app.context_processor
+    def inject_static_url():
+        def static_url(filename):
+            try:
+                version = int(os.stat(
+                    os.path.join(app.static_folder, filename)).st_mtime)
+            except OSError:
+                return url_for('static', filename=filename)
+            return url_for('static', filename=filename, v=version)
+        return {'static_url': static_url}
 
     @app.after_request
     def set_security_headers(response):

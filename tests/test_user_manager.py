@@ -62,6 +62,69 @@ def test_transfer_balance_without_balance_is_noop(user_manager):
     assert user_manager.check_balance(MAC) == 25
 
 
+def test_snapshot_skips_write_for_unchanged_device(user_manager):
+    """A steady connected device must not dirty a page on every poll."""
+    device = {'mac_address': MAC, 'ip': '192.168.4.5', 'hostname': 'phone'}
+    user_manager.sync_connection_snapshot([device])
+
+    conn = user_manager._connect()
+    try:
+        before = conn.execute(
+            'SELECT last_seen_at FROM device_connections '
+            'WHERE mac_address = ?', (MAC,)).fetchone()['last_seen_at']
+        # Age the row past the refresh window and confirm it does get rewritten
+        user_manager.sync_connection_snapshot([device])
+        after = conn.execute(
+            'SELECT last_seen_at FROM device_connections '
+            'WHERE mac_address = ?', (MAC,)).fetchone()['last_seen_at']
+        assert after == before
+
+        conn.execute(
+            "UPDATE device_connections SET last_seen_at = datetime('now', '-1 hour')")
+        conn.commit()
+    finally:
+        conn.close()
+
+    user_manager.sync_connection_snapshot([device])
+    rows = user_manager.get_users_with_balance()  # touches the same table
+    assert rows == []  # no balance yet; the call must not error
+
+    # A changed hostname always writes through
+    user_manager.sync_connection_snapshot(
+        [{**device, 'hostname': 'renamed'}])
+    conn = user_manager._connect()
+    try:
+        row = conn.execute(
+            'SELECT hostname, missed_polls FROM device_connections '
+            'WHERE mac_address = ?', (MAC,)).fetchone()
+        assert row['hostname'] == 'renamed'
+        assert row['missed_polls'] == 0
+    finally:
+        conn.close()
+
+
+def test_prune_history_trims_old_time_logs(user_manager):
+    user_manager.add_time(MAC, 5, 25)
+    user_manager.deduct_time(MAC, 1)
+
+    conn = user_manager._connect()
+    try:
+        conn.execute(
+            "UPDATE time_logs SET deducted_at = datetime('now', '-60 days')")
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert user_manager.prune_history() == 1
+    conn = user_manager._connect()
+    try:
+        assert conn.execute('SELECT COUNT(*) c FROM time_logs').fetchone()['c'] == 0
+    finally:
+        conn.close()
+    # Balance is untouched by history pruning
+    assert user_manager.check_balance(MAC) == 24
+
+
 def _backdate(user_manager, hours):
     """Age every user and transaction row by `hours`."""
     conn = user_manager._connect()

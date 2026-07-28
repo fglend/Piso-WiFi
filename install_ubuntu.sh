@@ -16,23 +16,27 @@ echo -e "${GREEN}Installing PISO WIFI System on Ubuntu...${NC}"
 
 # Install system dependencies
 echo -e "${GREEN}Installing system dependencies...${NC}"
+# Runtime only. The previous list pulled in build-essential, python3-dev,
+# pkg-config, libnl/libssl headers and linux-headers-$(uname -r) purely to
+# compile netifaces and psutil, which nothing imports (see requirements.txt).
+# That is ~400 MB of packages and a long compile on a Cortex-A7 for nothing -
+# and on Armbian the literal linux-headers-$(uname -r) package usually does
+# not exist, which aborted the whole apt transaction.
 apt-get update
-apt-get install -y \
+apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
     python3-venv \
-    python3-dev \
-    libnl-3-dev \
-    libnl-genl-3-dev \
-    libssl-dev \
+    hostapd \
+    dnsmasq \
+    iw \
+    iproute2 \
+    iptables \
     net-tools \
     wireless-tools \
     sqlite3 \
     conntrack \
-    rfkill \
-    build-essential \
-    pkg-config \
-    linux-headers-$(uname -r)
+    rfkill
 
 # Create application directory
 APP_DIR="/opt/piso_wifi"
@@ -66,6 +70,11 @@ FLASK_DEBUG=False
 LOG_LEVEL=INFO
 LOG_FILE=logs/piso_wifi.log
 CHECK_INTERVAL=15
+# One INFO line per device per minute. journald is volatile here (RAM-backed),
+# so leaving this on spends the Pi's limited memory on log noise. The
+# time_logs table is the audit trail either way.
+LOG_DEDUCTIONS=false
+DEVICE_RETENTION_HOURS=24
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=admin123
 DHCP_RANGE_START=192.168.4.2
@@ -85,6 +94,25 @@ Storage=volatile
 RuntimeMaxUse=50M
 EOF
 systemctl restart systemd-journald
+
+# Kernel tuning for a 1 GB SD-card board. vm.swappiness keeps the working set
+# in RAM; the dirty ratios let writeback batch instead of dribbling small
+# writes at the card; the ARP cache is sized for a room full of phones so the
+# kernel is not garbage-collecting neighbor entries the portal depends on.
+echo -e "${GREEN}Applying kernel tuning for Orange Pi...${NC}"
+cat > /etc/sysctl.d/99-pisowifi.conf << EOF
+vm.swappiness=10
+vm.vfs_cache_pressure=50
+vm.dirty_background_ratio=10
+vm.dirty_ratio=25
+vm.dirty_expire_centisecs=6000
+vm.dirty_writeback_centisecs=1500
+net.ipv4.neigh.default.gc_thresh1=256
+net.ipv4.neigh.default.gc_thresh2=512
+net.ipv4.neigh.default.gc_thresh3=1024
+net.netfilter.nf_conntrack_max=16384
+EOF
+sysctl --system >/dev/null 2>&1 || true
 
 # Create systemd service
 echo -e "${GREEN}Creating system service...${NC}"
