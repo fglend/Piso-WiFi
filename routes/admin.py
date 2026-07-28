@@ -169,6 +169,10 @@ def update_settings():
         'dashboard_refresh_seconds': refresh_seconds,
         'default_download_kbps': default_download,
         'default_upload_kbps': default_upload,
+        # Unchecked checkboxes are simply absent from the POST body, so
+        # presence is the value.
+        'pause_on_disconnect': (
+            '1' if request.form.get('pause_on_disconnect') else '0'),
     }
 
     settings_saved = svc.user_manager.update_app_settings(values)

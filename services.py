@@ -15,6 +15,12 @@ from user_manager import UserManager
 logger = logging.getLogger(__name__)
 
 
+def _as_bool(value):
+    """Parse a stored app_settings flag. Module level, not a method: the
+    settings helpers are bound onto plain namespaces in tests."""
+    return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
 class Services:
     def __init__(self, settings=None, manage_hardware=True):
         self._shutdown = False
@@ -75,6 +81,10 @@ class Services:
             'dashboard_refresh_seconds': str(self.settings.dashboard_refresh_seconds),
             'default_download_kbps': str(self.settings.default_download_kbps),
             'default_upload_kbps': str(self.settings.default_upload_kbps),
+            # Stored as a runtime setting so the operator can switch metering
+            # policy from the settings page. The .env value is only the
+            # first-run default; the database wins after that.
+            'pause_on_disconnect': '1' if self.settings.pause_on_disconnect else '0',
         }
 
     def refresh_runtime_settings(self):
@@ -87,6 +97,8 @@ class Services:
         self.settings.dashboard_refresh_seconds = int(values['dashboard_refresh_seconds'])
         self.settings.default_download_kbps = int(values['default_download_kbps'])
         self.settings.default_upload_kbps = int(values['default_upload_kbps'])
+        self.settings.pause_on_disconnect = _as_bool(
+            values['pause_on_disconnect'])
         return values
 
     def _init_network_controller(self, manage_hardware, max_retries=3):

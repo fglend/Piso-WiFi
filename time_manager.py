@@ -14,17 +14,27 @@ class TimeManager:
     """
 
     PURGE_INTERVAL_SECONDS = 3600
+    # Offline devices are only billable in whole minutes, so sweeping them on
+    # every few-second poll would just re-run the same queries for nothing.
+    OFFLINE_SWEEP_SECONDS = 60
 
     def __init__(self, user_manager, network_controller, settings):
         self.user_manager = user_manager
         self.network_controller = network_controller
+        self.settings = settings
         self.check_interval = settings.check_interval
-        self.pause_on_disconnect = settings.pause_on_disconnect
         self.device_retention_hours = settings.device_retention_hours
         self.running = False
         self.thread = None
         self._next_purge_at = 0.0
+        self._next_offline_sweep_at = 0.0
         self.logger = logging.getLogger(__name__)
+
+    @property
+    def pause_on_disconnect(self):
+        """Read live: the admin settings page flips this at runtime and the
+        meter thread must honour it without a service restart."""
+        return self.settings.pause_on_disconnect
 
     def start(self):
         self._reset_session_clocks()
@@ -88,6 +98,8 @@ class TimeManager:
                         if self.user_manager.get_last_deduction(mac) is not None:
                             self.user_manager.clear_session(mac)
                             self.logger.info(f"Paused clock for disconnected device {mac}")
+            else:
+                self._meter_offline_devices(connected_macs, now)
         except Exception as e:
             self.logger.error(f"Error in check_and_deduct_time: {e}")
 
@@ -113,7 +125,31 @@ class TimeManager:
         except Exception as e:
             self.logger.error(f"Error pruning history: {e}")
 
-    def _process_device(self, mac, now):
+    def _meter_offline_devices(self, connected_macs, now):
+        """Keep charging devices that are not on the network right now.
+
+        This is what makes a day/week/month package mean elapsed time rather
+        than screen time: the balance runs down whether or not the phone is
+        associated, and expires on schedule instead of sitting frozen until
+        the customer happens to reconnect.
+
+        Operator downtime is still not charged - _reset_session_clocks()
+        restarts each clock at startup, so a power cut or service restart
+        does not bill customers for time the shop was closed.
+        """
+        if now < self._next_offline_sweep_at:
+            return
+        self._next_offline_sweep_at = now + self.OFFLINE_SWEEP_SECONDS
+        for user in self.user_manager.get_active_users():
+            mac = user['mac_address']
+            if mac in connected_macs:
+                continue
+            try:
+                self._process_device(mac, now, connected=False)
+            except Exception as e:
+                self.logger.error(f"Error metering offline device {mac}: {e}")
+
+    def _process_device(self, mac, now, connected=True):
         if self.user_manager.is_paused(mac):
             # Manually paused from the portal: keep the clock frozen and the
             # device blocked. Never self-heal access or deduct while paused.
@@ -134,7 +170,9 @@ class TimeManager:
 
         # A concurrent top-up can race with a stale zero-balance block. Track
         # the applied firewall state and self-heal it on the next meter pass.
-        if not self.network_controller.is_access_allowed(mac):
+        # Only for devices actually present: resolving an absent device's IP
+        # fails, and unblocking one that is not associated buys nothing.
+        if connected and not self.network_controller.is_access_allowed(mac):
             info = self.user_manager.get_device_info(mac)
             if self.network_controller.unblock_mac(mac) and info:
                 self.network_controller.set_bandwidth_limit(

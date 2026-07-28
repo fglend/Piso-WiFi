@@ -15,6 +15,66 @@ def connect(mock_network, *macs):
     ]
 
 
+def test_offline_device_keeps_burning_time_when_continuation_on(
+        user_manager, mock_network, settings):
+    """Elapsed-time mode: a monthly customer's balance runs down while away."""
+    settings.pause_on_disconnect = False
+    tm = make_tm(user_manager, mock_network, settings)
+    user_manager.add_time(MAC, 5, 25)
+    user_manager.set_last_deduction(MAC, 1000.0)
+    connect(mock_network)  # nobody associated
+
+    tm._meter_offline_devices(set(), 1000.0 + 600)  # 10 minutes later
+    assert user_manager.check_balance(MAC) == 15
+    # An absent device is never unblocked or shaped - resolving its IP fails
+    mock_network.unblock_mac.assert_not_called()
+    mock_network.set_bandwidth_limit.assert_not_called()
+
+
+def test_offline_device_blocked_when_balance_runs_out(
+        user_manager, mock_network, settings):
+    settings.pause_on_disconnect = False
+    tm = make_tm(user_manager, mock_network, settings)
+    user_manager.add_time(MAC, 1, 5)
+    user_manager.set_last_deduction(MAC, 1000.0)
+
+    tm._meter_offline_devices(set(), 1000.0 + 3600)
+    assert user_manager.check_balance(MAC) == 0
+    mock_network.block_mac.assert_called_with(MAC)
+
+
+def test_offline_sweep_throttled_to_a_minute(user_manager, mock_network, settings):
+    settings.pause_on_disconnect = False
+    tm = make_tm(user_manager, mock_network, settings)
+    user_manager.add_time(MAC, 5, 25)
+    user_manager.set_last_deduction(MAC, 1000.0)
+
+    tm._meter_offline_devices(set(), 1000.0 + 120)   # charges 2 minutes
+    tm._meter_offline_devices(set(), 1000.0 + 150)   # inside the window: skipped
+    assert user_manager.check_balance(MAC) == 23
+
+
+def test_connected_device_unaffected_by_continuation(
+        user_manager, mock_network, settings):
+    """A device that is present must not be charged twice per pass."""
+    settings.pause_on_disconnect = False
+    tm = make_tm(user_manager, mock_network, settings)
+    user_manager.add_time(MAC, 5, 25)
+    user_manager.set_last_deduction(MAC, 1000.0)
+
+    tm._meter_offline_devices({MAC}, 1000.0 + 600)
+    assert user_manager.check_balance(MAC) == 25
+
+
+def test_pause_setting_is_read_live(user_manager, mock_network, settings):
+    """Flipping the admin toggle must not need a service restart."""
+    settings.pause_on_disconnect = True
+    tm = make_tm(user_manager, mock_network, settings)
+    assert tm.pause_on_disconnect is True
+    settings.pause_on_disconnect = False
+    assert tm.pause_on_disconnect is False
+
+
 def test_purge_runs_once_per_hour(user_manager, mock_network, settings):
     tm = make_tm(user_manager, mock_network, settings)
     tm.user_manager = MagicMock()

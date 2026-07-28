@@ -96,6 +96,37 @@ def test_transfer_balance_rejects_invalid_destination(admin_client, csrf_token, 
     services.network_controller.unblock_mac.assert_not_called()
 
 
+def _settings_form(**overrides):
+    form = {
+        'minutes_per_peso': 10, 'coinslot_claim_timeout': 60,
+        'coinslot_pulses_per_peso': 1, 'portal_title': 'T',
+        'portal_subtitle': 'S', 'dashboard_refresh_seconds': 5,
+        'default_download_kbps': 2048, 'default_upload_kbps': 1024,
+    }
+    form.update(overrides)
+    return form
+
+
+def test_settings_toggle_persists_pause_on_disconnect(admin_client, csrf_token, services):
+    post(admin_client, '/admin/settings', csrf_token,
+         **_settings_form(pause_on_disconnect='1'))
+    assert services.settings.pause_on_disconnect is True
+    assert b'checked' in admin_client.get('/admin/settings').data
+
+    # Unchecked boxes are absent from the POST body entirely
+    post(admin_client, '/admin/settings', csrf_token, **_settings_form())
+    assert services.settings.pause_on_disconnect is False
+
+
+def test_settings_toggle_survives_refresh(admin_client, csrf_token, services):
+    """The stored value must win over the .env default on every refresh."""
+    services.settings.pause_on_disconnect = True
+    post(admin_client, '/admin/settings', csrf_token, **_settings_form())
+    services.settings.pause_on_disconnect = True   # simulate an env-based reset
+    services.refresh_runtime_settings()
+    assert services.settings.pause_on_disconnect is False
+
+
 def test_pause_button_shown_and_works_when_enabled(client, csrf_token, services):
     services.settings.pause_on_disconnect = True
     services.user_manager.add_time(MAC, 5, 25)

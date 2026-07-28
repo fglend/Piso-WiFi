@@ -70,6 +70,28 @@
                 </div>
             </div>
 
+            <h2>Metering</h2>
+            {% set pausing_on = app_settings.pause_on_disconnect in ('1', 'true', 'yes', 'on') %}
+            <div class="setting-toggle mb-3">
+                <input id="pause_on_disconnect" name="pause_on_disconnect" type="checkbox"
+                       value="1" {% if pausing_on %}checked{% endif %}>
+                <div>
+                    <label for="pause_on_disconnect" class="mb-0">Pause time when a device disconnects</label>
+                    <div class="muted small mt-2">
+                        <strong>On</strong> &mdash; time is screen time. A customer's
+                        countdown freezes the moment they leave the network and
+                        resumes when they come back. Customers also get the
+                        <em>Pause my time</em> button on the portal.
+                    </div>
+                    <div class="muted small mt-2">
+                        <strong>Off</strong> &mdash; time is elapsed time. The countdown
+                        keeps running while the device is away, so a day, week or
+                        monthly package expires on schedule instead of lasting for
+                        months of occasional use. Shop downtime is never charged.
+                    </div>
+                </div>
+            </div>
+
             <button type="submit" class="btn btn-primary">Save Settings</button>
         </form>
     </div>

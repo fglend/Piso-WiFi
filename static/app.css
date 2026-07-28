@@ -352,6 +352,24 @@ table.table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
 .step.is-done { border-color: var(--ok); }
 .step.is-done .step-num { background: var(--ok-soft); color: var(--ok); }
 
+/* --- settings toggle row ------------------------------------------------------ */
+.setting-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.9rem 1rem;
+  background: var(--surface-2);
+}
+.setting-toggle input[type="checkbox"] {
+  width: 1.1rem; height: 1.1rem;
+  margin-top: 0.15rem;
+  flex: none;
+  accent-color: var(--accent);
+}
+.setting-toggle label { font-weight: 600; cursor: pointer; }
+
 /* --- portal pause panel ------------------------------------------------------ */
 .pause-panel {
   display: flex;
