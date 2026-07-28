@@ -549,6 +549,100 @@ class UserManager:
         finally:
             conn.close()
 
+    def transfer_balance(self, from_mac, to_mac):
+        """Move a device's remaining time to another MAC.
+
+        Needed because balances are keyed on MAC: a phone that rotates its
+        randomized Wi-Fi address (iOS "Rotating" private address, Android
+        non-persistent randomization, or a plain "Forget This Network")
+        rejoins as a brand-new device and loses its time.
+
+        Returns the minutes moved, or None when the source has no balance.
+        """
+        from_mac = (from_mac or '').strip().upper()
+        to_mac = (to_mac or '').strip().upper()
+        if from_mac == to_mac:
+            return None
+
+        with self._with_conn(
+                f'Transferring balance {from_mac} -> {to_mac}') as (conn, out):
+            source = conn.execute(
+                'SELECT id, time_balance FROM users WHERE mac_address = ?',
+                (from_mac,)).fetchone()
+            if source is not None and source['time_balance'] > 0:
+                minutes = source['time_balance']
+                target = conn.execute(
+                    'SELECT id FROM users WHERE mac_address = ?',
+                    (to_mac,)).fetchone()
+
+                if target is None:
+                    # No row for the new MAC yet: rename in place so the
+                    # device keeps its plan, bandwidth limits and history.
+                    conn.execute(
+                        'UPDATE users SET mac_address = ? WHERE id = ?',
+                        (to_mac, source['id']))
+                else:
+                    conn.execute('''
+                        UPDATE users
+                        SET time_balance = time_balance + ?, status = 'active'
+                        WHERE id = ?
+                    ''', (minutes, target['id']))
+                    conn.execute('''
+                        UPDATE users
+                        SET time_balance = 0, status = 'inactive'
+                        WHERE id = ?
+                    ''', (source['id'],))
+
+                out.result = minutes
+
+        if out.result is not None:
+            self.logger.info(
+                f"Transferred {out.result} minutes from {from_mac} to {to_mac}")
+        return out.result
+
+    def purge_stale_devices(self, retention_hours=24):
+        """Delete spent devices that have been idle for retention_hours.
+
+        Rotated randomized MACs leave behind zero-balance user rows that will
+        never be seen again; without this the users table grows forever.
+        Transactions and time_logs are kept for the audit trail (revenue sums
+        transactions directly, and the history view left-joins users, so a
+        purged device just shows a blank MAC on rows older than the window).
+
+        retention_hours <= 0 disables the purge. Returns the rows deleted.
+        """
+        if retention_hours <= 0:
+            return 0
+
+        cutoff = f'-{int(retention_hours)} hours'
+        with self._with_conn('Purging stale devices', default=0) as (conn, out):
+            rows = conn.execute('''
+                SELECT id, mac_address FROM users
+                WHERE time_balance <= 0
+                  AND COALESCE(last_deduction, created_at) < datetime('now', ?)
+                  AND id NOT IN (
+                      SELECT user_id FROM transactions
+                      WHERE user_id IS NOT NULL
+                        AND created_at >= datetime('now', ?)
+                  )
+            ''', (cutoff, cutoff)).fetchall()
+
+            if rows:
+                ids = [row['id'] for row in rows]
+                macs = [row['mac_address'] for row in rows]
+                placeholders = ','.join('?' for _ in ids)
+                conn.execute(
+                    f'DELETE FROM users WHERE id IN ({placeholders})', ids)
+                conn.execute(
+                    f'DELETE FROM sessions WHERE mac_address IN ({placeholders})',
+                    macs)
+                self.logger.info(
+                    f"Purged {len(rows)} device(s) idle for over "
+                    f"{int(retention_hours)}h")
+
+            out.result = len(rows)
+        return out.result
+
     # --- device / plan info ---------------------------------------------------
 
     def get_device_info(self, mac_address):

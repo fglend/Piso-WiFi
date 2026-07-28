@@ -13,13 +13,17 @@ class TimeManager:
     back-charges downtime.
     """
 
+    PURGE_INTERVAL_SECONDS = 3600
+
     def __init__(self, user_manager, network_controller, settings):
         self.user_manager = user_manager
         self.network_controller = network_controller
         self.check_interval = settings.check_interval
         self.pause_on_disconnect = settings.pause_on_disconnect
+        self.device_retention_hours = settings.device_retention_hours
         self.running = False
         self.thread = None
+        self._next_purge_at = 0.0
         self.logger = logging.getLogger(__name__)
 
     def start(self):
@@ -56,6 +60,7 @@ class TimeManager:
         while self.running:
             try:
                 self._check_and_deduct_time()
+                self._purge_stale_devices()
                 time.sleep(self.check_interval)
             except Exception as e:
                 self.logger.error(f"Error in time manager run loop: {e}")
@@ -85,6 +90,20 @@ class TimeManager:
                             self.logger.info(f"Paused clock for disconnected device {mac}")
         except Exception as e:
             self.logger.error(f"Error in check_and_deduct_time: {e}")
+
+    def _purge_stale_devices(self):
+        """Drop spent, long-idle device rows. Runs hourly - the meter loop
+        polls every few seconds and this is housekeeping, not metering."""
+        if self.device_retention_hours <= 0:
+            return
+        now = time.time()
+        if now < self._next_purge_at:
+            return
+        self._next_purge_at = now + self.PURGE_INTERVAL_SECONDS
+        try:
+            self.user_manager.purge_stale_devices(self.device_retention_hours)
+        except Exception as e:
+            self.logger.error(f"Error purging stale devices: {e}")
 
     def _process_device(self, mac, now):
         if self.user_manager.is_paused(mac):

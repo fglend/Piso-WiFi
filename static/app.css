@@ -352,6 +352,47 @@ table.table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
 .step.is-done { border-color: var(--ok); }
 .step.is-done .step-num { background: var(--ok-soft); color: var(--ok); }
 
+/* --- portal pause panel ------------------------------------------------------ */
+.pause-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 0.9rem 1.1rem;
+  margin-bottom: 1.25rem;
+}
+.pause-panel-text { min-width: 12rem; flex: 1 1 16rem; }
+.pause-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 700;
+  margin-bottom: 0.15rem;
+}
+.pause-panel-note { color: var(--muted); font-size: 0.85rem; margin: 0; }
+.pause-panel form { margin: 0; }
+.pause-dot {
+  width: 0.6rem; height: 0.6rem;
+  border-radius: 50%;
+  background: var(--ok);
+  flex: none;
+}
+/* Paused state: warm tint so a stopped clock is unmistakable at a glance */
+.pause-panel.is-paused {
+  border-color: var(--warn);
+  background: var(--warn-soft);
+}
+.pause-panel.is-paused .pause-panel-title { color: var(--warn); }
+.pause-panel.is-paused .pause-panel-note { color: var(--warn); opacity: 0.85; }
+.pause-panel.is-paused .pause-dot { background: var(--warn); }
+@media (max-width: 480px) {
+  .pause-panel .btn { width: 100%; }
+}
+
 /* --- portal hero ------------------------------------------------------------------- */
 .portal-header {
   display: flex;

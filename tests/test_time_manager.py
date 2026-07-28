@@ -15,6 +15,31 @@ def connect(mock_network, *macs):
     ]
 
 
+def test_purge_runs_once_per_hour(user_manager, mock_network, settings):
+    tm = make_tm(user_manager, mock_network, settings)
+    tm.user_manager = MagicMock()
+    tm.user_manager.purge_stale_devices.return_value = 0
+
+    tm._purge_stale_devices()
+    tm._purge_stale_devices()
+    assert tm.user_manager.purge_stale_devices.call_count == 1
+    tm.user_manager.purge_stale_devices.assert_called_with(
+        settings.device_retention_hours)
+
+    tm._next_purge_at = 0.0
+    tm._purge_stale_devices()
+    assert tm.user_manager.purge_stale_devices.call_count == 2
+
+
+def test_purge_skipped_when_retention_disabled(user_manager, mock_network, settings):
+    tm = make_tm(user_manager, mock_network, settings)
+    tm.device_retention_hours = 0
+    tm.user_manager = MagicMock()
+
+    tm._purge_stale_devices()
+    tm.user_manager.purge_stale_devices.assert_not_called()
+
+
 def test_first_sighting_starts_clock_without_charging(user_manager, mock_network, settings):
     tm = make_tm(user_manager, mock_network, settings)
     user_manager.add_time(MAC, 5, 25)

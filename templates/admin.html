@@ -192,6 +192,7 @@
                     <th>Remaining (min)</th>
                     <th>Status</th>
                     <th>Last Seen</th>
+                    <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
@@ -209,10 +210,23 @@
                         {% endif %}
                     </td>
                     <td>{{ device.last_seen_at or '-' }}</td>
+                    <td>
+                        <form action="{{ url_for('admin.transfer_balance') }}" method="POST" class="form-row"
+                              onsubmit="return confirm('Move {{ '%g'|format(device.time_balance) }} minute(s) from {{ device.mac_address }} to the MAC you entered?');">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <input type="hidden" name="mac_address" value="{{ device.mac_address }}">
+                            <input type="text" name="to_mac" placeholder="New MAC"
+                                   aria-label="Destination MAC address"
+                                   pattern="([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}"
+                                   title="Format: AA:BB:CC:DD:EE:FF"
+                                   style="max-width: 170px;" required>
+                            <button type="submit" class="btn btn-ghost btn-sm">Transfer Time</button>
+                        </form>
+                    </td>
                 </tr>
                 {% else %}
                 <tr>
-                    <td colspan="6" class="text-center muted">
+                    <td colspan="7" class="text-center muted">
                         No devices with remaining time
                     </td>
                 </tr>

@@ -113,6 +113,11 @@ class Settings:
     # while it is disconnected (only the portal Pause button freezes it), so
     # this defaults off. Set PAUSE_ON_DISCONNECT=true to auto-freeze on drop.
     pause_on_disconnect: bool = field(default_factory=lambda: _env_bool('PAUSE_ON_DISCONNECT', False))
+    # Spent devices idle this long are deleted, so the rows left behind by
+    # rotated randomized MACs don't accumulate forever. A purged device is
+    # simply unknown again (zero balance); set to 0 to keep every row.
+    device_retention_hours: int = field(
+        default_factory=lambda: _env_int('DEVICE_RETENTION_HOURS', 24))
 
     # Coinslot (GPIO pulse type, e.g. CH-926 / Weiyu universal)
     coinslot_enabled: bool = field(default_factory=lambda: _env_bool('COINSLOT_ENABLED', False))

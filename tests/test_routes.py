@@ -1,7 +1,7 @@
 from io import BytesIO
 
 from post_formatting import render_post_description
-from tests.conftest import MAC
+from tests.conftest import MAC, OTHER_MAC
 
 
 def post(client, url, token, **data):
@@ -75,6 +75,56 @@ def test_deduct_time_blocks_at_zero(admin_client, csrf_token, services):
     post(admin_client, '/deduct_time', csrf_token, mac_address=MAC, minutes=10)
     assert services.user_manager.check_balance(MAC) == 0
     services.network_controller.block_mac.assert_called_with(MAC)
+
+
+def test_transfer_balance_moves_time_to_new_mac(admin_client, csrf_token, services):
+    services.user_manager.add_time(MAC, 1, 5)
+    resp = post(admin_client, '/admin/transfer_balance', csrf_token,
+                mac_address=MAC, to_mac=OTHER_MAC)
+    assert resp.status_code == 302
+    assert services.user_manager.check_balance(OTHER_MAC) == 5
+    assert services.user_manager.check_balance(MAC) == 0
+    services.network_controller.unblock_mac.assert_called_with(OTHER_MAC)
+    services.network_controller.block_mac.assert_called_with(MAC)
+
+
+def test_transfer_balance_rejects_invalid_destination(admin_client, csrf_token, services):
+    services.user_manager.add_time(MAC, 1, 5)
+    post(admin_client, '/admin/transfer_balance', csrf_token,
+         mac_address=MAC, to_mac='not-a-mac')
+    assert services.user_manager.check_balance(MAC) == 5
+    services.network_controller.unblock_mac.assert_not_called()
+
+
+def test_pause_button_shown_and_works_when_enabled(client, csrf_token, services):
+    services.settings.pause_on_disconnect = True
+    services.user_manager.add_time(MAC, 5, 25)
+
+    assert b'Pause my time' in client.get('/').data
+    post(client, '/pause', csrf_token)
+    assert services.user_manager.is_paused(MAC) is True
+
+
+def test_pause_hidden_and_rejected_when_disabled(client, csrf_token, services):
+    services.settings.pause_on_disconnect = False
+    services.user_manager.add_time(MAC, 5, 25)
+
+    assert b'Pause my time' not in client.get('/').data
+    post(client, '/pause', csrf_token)
+    assert services.user_manager.is_paused(MAC) is False
+
+
+def test_resume_still_available_when_pausing_disabled(client, csrf_token, services):
+    """A device paused before the operator flipped the switch must not be
+    stranded with a frozen balance and no internet."""
+    services.settings.pause_on_disconnect = True
+    services.user_manager.add_time(MAC, 5, 25)
+    post(client, '/pause', csrf_token)
+
+    services.settings.pause_on_disconnect = False
+    assert b'Resume my time' in client.get('/').data
+    post(client, '/resume', csrf_token)
+    assert services.user_manager.is_paused(MAC) is False
 
 
 def test_set_bandwidth_validates_range(admin_client, csrf_token, services):

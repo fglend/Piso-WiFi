@@ -58,18 +58,43 @@
         {% endif %}
     </div>
 
+    {# Resume always renders when paused, even after the operator turns pausing
+       off, so nobody is ever stranded with a frozen balance and no internet. #}
     {% if device.paused %}
-    <form action="{{ url_for('portal.resume') }}" method="POST" class="mb-4">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <button type="submit" class="btn btn-primary">Resume my time</button>
-        <span class="muted small">Your internet is paused and no minutes are being used.</span>
-    </form>
-    {% elif device.time_balance > 0 %}
-    <form action="{{ url_for('portal.pause') }}" method="POST" class="mb-4">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <button type="submit" class="btn btn-ghost">Pause my time</button>
-        <span class="muted small">Stops the countdown and your internet until you resume.</span>
-    </form>
+    <div class="pause-panel is-paused">
+        <div class="pause-panel-text">
+            <div class="pause-panel-title">
+                <span class="pause-dot" aria-hidden="true"></span>
+                Your time is paused
+            </div>
+            <p class="pause-panel-note">
+                The countdown is stopped and your internet is off. Your
+                {{ '%.1f'|format(device.time_balance) }} minute(s) stay saved
+                until you resume.
+            </p>
+        </div>
+        <form action="{{ url_for('portal.resume') }}" method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="btn btn-primary">Resume my time</button>
+        </form>
+    </div>
+    {% elif pause_enabled and device.time_balance > 0 %}
+    <div class="pause-panel">
+        <div class="pause-panel-text">
+            <div class="pause-panel-title">
+                <span class="pause-dot" aria-hidden="true"></span>
+                Your time is running
+            </div>
+            <p class="pause-panel-note">
+                Stepping away? Pausing stops the countdown and your internet so
+                you keep your remaining minutes for later.
+            </p>
+        </div>
+        <form action="{{ url_for('portal.pause') }}" method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="btn btn-ghost">Pause my time</button>
+        </form>
+    </div>
     {% endif %}
 
     <div class="grid grid-3 mb-4">
@@ -96,6 +121,18 @@
             <div class="muted small">minutes per peso</div>
             {% endif %}
         </div>
+    </div>
+
+    <div class="flash flash-info" role="note">
+        <strong>Keep your remaining time.</strong>
+        Your minutes are saved to this device's Wi-Fi address. Please do not
+        tap <em>Forget This Network</em> — you would come back as a new device
+        with zero balance.
+        <span class="muted small">
+            iPhone users: Settings &rarr; Wi-Fi &rarr; (i) beside this network
+            &rarr; set <em>Private Wi-Fi Address</em> to <em>Fixed</em>.
+            Lost your time after switching? Ask the operator to transfer it.
+        </span>
     </div>
 
     {% if coinslot_enabled %}

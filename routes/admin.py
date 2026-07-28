@@ -238,6 +238,39 @@ def deduct_time():
     return redirect(url_for('admin.dashboard'))
 
 
+@admin_bp.route('/admin/transfer_balance', methods=['POST'])
+@admin_required
+def transfer_balance():
+    """Move remaining time to a new MAC, for devices whose randomized Wi-Fi
+    address rotated and came back as a stranger with zero balance."""
+    svc = _services()
+    from_mac = _form_mac()
+    to_mac = (request.form.get('to_mac') or '').strip().upper()
+    if not from_mac:
+        return redirect(url_for('admin.dashboard'))
+    if not is_valid_mac(to_mac):
+        flash('Invalid destination MAC address', 'error')
+        return redirect(url_for('admin.dashboard'))
+    if from_mac == to_mac:
+        flash('Source and destination MAC are the same', 'error')
+        return redirect(url_for('admin.dashboard'))
+
+    minutes = svc.user_manager.transfer_balance(from_mac, to_mac)
+    if minutes is None:
+        flash('No remaining time to transfer from that device', 'error')
+        return redirect(url_for('admin.dashboard'))
+
+    svc.network_controller.unblock_mac(to_mac)
+    info = svc.user_manager.get_device_info(to_mac)
+    if info:
+        svc.network_controller.set_bandwidth_limit(
+            to_mac, info['download_limit'], info['upload_limit'])
+    if svc.user_manager.check_balance(from_mac) <= 0:
+        svc.network_controller.block_mac(from_mac)
+    flash(f'Transferred {minutes:g} minutes to {to_mac}', 'success')
+    return redirect(url_for('admin.dashboard'))
+
+
 @admin_bp.route('/set_bandwidth', methods=['POST'])
 @admin_required
 def set_bandwidth():

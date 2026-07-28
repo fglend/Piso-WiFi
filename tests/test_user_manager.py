@@ -34,6 +34,87 @@ def test_deduct_time_unknown_user(user_manager):
     assert user_manager.deduct_time(OTHER_MAC, 5) is False
 
 
+def test_transfer_balance_to_new_mac_keeps_plan(user_manager):
+    user_manager.add_time(MAC, 5, 25)
+    user_manager.set_plan(MAC, 'premium')
+
+    assert user_manager.transfer_balance(MAC, OTHER_MAC) == 25
+    assert user_manager.check_balance(MAC) == 0
+    info = user_manager.get_device_info(OTHER_MAC)
+    assert info['time_balance'] == 25
+    assert info['plan'] == 'premium'
+
+
+def test_transfer_balance_merges_into_existing_mac(user_manager):
+    user_manager.add_time(MAC, 5, 25)
+    user_manager.add_time(OTHER_MAC, 1, 5)
+
+    assert user_manager.transfer_balance(MAC, OTHER_MAC) == 25
+    assert user_manager.check_balance(OTHER_MAC) == 30
+    assert user_manager.check_balance(MAC) == 0
+    assert user_manager.get_device_info(MAC)['status'] == 'inactive'
+
+
+def test_transfer_balance_without_balance_is_noop(user_manager):
+    assert user_manager.transfer_balance(MAC, OTHER_MAC) is None
+    user_manager.add_time(MAC, 5, 25)
+    assert user_manager.transfer_balance(MAC, MAC) is None
+    assert user_manager.check_balance(MAC) == 25
+
+
+def _backdate(user_manager, hours):
+    """Age every user and transaction row by `hours`."""
+    conn = user_manager._connect()
+    try:
+        conn.execute(
+            "UPDATE users SET created_at = datetime('now', ?), "
+            "last_deduction = datetime('now', ?)",
+            (f'-{hours} hours', f'-{hours} hours'))
+        conn.execute(
+            "UPDATE transactions SET created_at = datetime('now', ?)",
+            (f'-{hours} hours',))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_purge_removes_spent_idle_devices(user_manager):
+    user_manager.add_time(MAC, 5, 25)
+    user_manager.deduct_time(MAC, 25)
+    user_manager.set_last_deduction(MAC, 1000.0)
+    _backdate(user_manager, 30)
+
+    assert user_manager.purge_stale_devices(24) == 1
+    assert user_manager.get_device_info(MAC) is None
+    # the persisted deduction clock goes with it
+    assert user_manager.get_last_deduction(MAC) is None
+    # revenue history survives the device
+    assert user_manager.get_revenue_summary()['month'] == 5
+
+
+def test_purge_keeps_devices_with_balance_or_recent_activity(user_manager):
+    user_manager.add_time(MAC, 5, 25)      # still has time
+    user_manager.add_time(OTHER_MAC, 1, 5)
+    user_manager.deduct_time(OTHER_MAC, 5)  # spent, but active just now
+    _backdate(user_manager, 30)
+    # re-activity after the backdate: a top-up inside the window
+    user_manager.add_time(OTHER_MAC, 1, 5)
+    user_manager.deduct_time(OTHER_MAC, 5)
+
+    assert user_manager.purge_stale_devices(24) == 0
+    assert user_manager.get_device_info(MAC) is not None
+    assert user_manager.get_device_info(OTHER_MAC) is not None
+
+
+def test_purge_disabled_by_zero_retention(user_manager):
+    user_manager.add_time(MAC, 5, 25)
+    user_manager.deduct_time(MAC, 25)
+    _backdate(user_manager, 300)
+
+    assert user_manager.purge_stale_devices(0) == 0
+    assert user_manager.get_device_info(MAC) is not None
+
+
 def test_get_device_info(user_manager):
     assert user_manager.get_device_info(MAC) is None
     user_manager.add_time(MAC, 5, 25)
