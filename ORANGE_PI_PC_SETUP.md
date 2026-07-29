@@ -17,7 +17,7 @@ Read this section before applying power.
 
 > [!DANGER]
 > The Orange Pi GPIO pins use **3.3 V logic**. Never connect 5 V or 12 V to
-> PA6, PA7, or any other GPIO. A 12 V connection can permanently destroy the
+> PA1, PD14, or any other GPIO. A 12 V connection can permanently destroy the
 > Orange Pi and may create a fire hazard.
 
 > [!WARNING]
@@ -54,7 +54,7 @@ current GPIO driver must be migrated to libgpiod before the coinslot can be
 used on that image.
 
 Existence of sysfs alone is not enough. Before setting GPIO numbers, identify
-the gpiochip that owns the H3 PA bank on the exact installed kernel:
+the gpiochip that owns the H3 banks on the exact installed kernel:
 
 ```bash
 for chip in /sys/class/gpio/gpiochip*; do
@@ -63,12 +63,41 @@ done
 sudo cat /sys/kernel/debug/gpio 2>/dev/null || true
 ```
 
-The legacy values `6` and `7` are valid only when the PA-bank gpiochip base is
-`0`, making PA6 `base + 6` and PA7 `base + 7`. The chip label should identify
-the Allwinner H3 pin controller and its `ngpio` range must cover both lines.
-If the PA-bank base is different, use `base + 6` and `base + 7` in `.env` and
-all manual commands below. If the controller-to-header mapping cannot be
-proven from the exact image's pinctrl/debug data, keep the coinslot disabled.
+This installation uses **physical header pin 12 for the coin pulse and pin 11
+for the relay**. Those two pins sit on different Allwinner banks, and the
+sysfs number is `base + bank_index * 32 + line`, with `PA=0, PB=1, PC=2,
+PD=3`:
+
+| Header pin | SoC line | Arithmetic | sysfs value when base is `0` |
+|---:|---|---|---:|
+| 12 | PD14 | `base + 3*32 + 14` | `110` |
+| 11 | PA1 | `base + 0*32 + 1` | `1` |
+
+The values `110` and `1` are valid **only** when the reported base is `0`. The
+chip label should identify the Allwinner H3 pin controller, and its `ngpio`
+must cover line 110 — a chip reporting `ngpio` of 32 exposes bank A alone and
+cannot reach PD14. If the base differs, add it to both numbers everywhere
+below. If the controller-to-header mapping cannot be proven from the exact
+image's pinctrl/debug data, keep the coinslot disabled.
+
+> [!WARNING]
+> **Pin 11 (PA1) is UART2_RX on the H3.** If the `uart2` device-tree overlay is
+> enabled, the kernel owns PA1 and the export will fail or the line will not
+> respond. Check before wiring:
+>
+> ```bash
+> grep -E '^overlays=|^param_uart' /boot/armbianEnv.txt
+> ```
+>
+> The list must not contain `uart2`. Edit `/boot/armbianEnv.txt` and reboot if
+> it does. Then confirm neither line is claimed by a driver:
+>
+> ```bash
+> sudo cat /sys/kernel/debug/gpio | grep -Ei 'PA1|PD14|gpio-1 |gpio-110 '
+> ```
+>
+> A line shown with a claimed label such as `uart`, `spi`, or `emac` belongs to
+> a driver and must not be used for the coinslot.
 
 ## 2. Bill of materials
 
@@ -85,10 +114,11 @@ proven from the exact image's pinctrl/debug data, keep the coinslot disabled.
   - a transistor/opto driver and flyback protection; and
   - a verified 3.3 V-compatible input
 - 12 V-compatible optocoupler/level-shifter module between the acceptor and
-  PA6
+  PD14 (physical pin 12)
 - 4.7 kΩ to 10 kΩ resistor if the isolator's 3.3 V output is open collector
   and its datasheet requires a pull-up
-- Optional 10 kΩ PA7 pull-up for a compatible active-low relay input
+- Optional 10 kΩ PA1 (physical pin 11) pull-up for a compatible active-low
+  relay input
 - Multimeter; an oscilloscope or logic analyzer is strongly recommended
 - Insulated enclosure, terminal blocks, ferrules, and strain relief
 
@@ -132,11 +162,10 @@ header positions, Raspberry Pi BCM numbers, or wiringPi numbers.
 
 | Purpose | SoC name | Physical header pin | `.env` sysfs value | Normal idle state |
 |---|---:|---:|---:|---|
-| Conditioned coin pulse input | PA6 | 7 | `COINSLOT_GPIO=6` | About 3.3 V; pulse falls LOW |
-| Relay control | PA7 | 29 | `COINSLOT_RELAY_GPIO=7` | HIGH when default active-low relay is off |
-| 3.3 V pull-up supply | — | 17 (or 1) | — | 3.3 V only |
-| Ground near pulse input | — | 6 or 9 | — | Ground |
-| Ground near relay control | — | 30 | — | Ground |
+| Conditioned coin pulse input | PD14 | 12 | `COINSLOT_GPIO=110` | About 3.3 V; pulse falls LOW |
+| Relay control | PA1 | 11 | `COINSLOT_RELAY_GPIO=1` | HIGH when default active-low relay is off |
+| 3.3 V pull-up supply | — | 1 (or 17) | — | 3.3 V only |
+| Ground near both signals | — | 9 or 14 | — | Ground |
 
 Minimal header reference, viewed from above with the board's pin-1 marking:
 
@@ -144,18 +173,25 @@ Minimal header reference, viewed from above with the board's pin-1 marking:
 Orange Pi PC 40-pin header (selected pins only)
 
   3.3 V  [ 1] [ 2]  5 V
-  PA6    [ 7] [ 8]  PA13
   GND    [ 9] [10]  PA14
-          ...
-  PA7    [29] [30]  GND
+  PA1    [11] [12]  PD14
+  GND    [14]
 
-PA6: physical pin 7,  legacy sysfs GPIO 6
-PA7: physical pin 29, legacy sysfs GPIO 7
+PA1  (relay):  physical pin 11, sysfs GPIO 1
+PD14 (coin):   physical pin 12, sysfs GPIO 110
 ```
 
-Pin **6** is a physical GND pin, while the number `6` in
-`COINSLOT_GPIO=6` means PA6/sysfs GPIO 6. Do not confuse these numbering
-systems.
+Do not confuse the numbering systems. `COINSLOT_RELAY_GPIO=1` is the sysfs
+line number for PA1, not physical pin 1 — physical pin 1 is the 3.3 V rail,
+and driving that would be a short. Likewise `COINSLOT_GPIO=110` is a sysfs
+number; there is no physical pin 110 on a 40-pin header.
+
+> [!CAUTION]
+> Pins 11 and 12 are physically adjacent. One carries a switching relay drive
+> and the other a low-current pulse input, so route the isolator output wire
+> short and keep it away from the relay lead, ideally with a ground wire
+> between them at the terminal block. If the coin count is erratic only while
+> the relay is energized, this coupling is the first thing to rule out.
 
 ## 5. Power and module wiring
 
@@ -170,10 +206,10 @@ flowchart TB
     PSU12 -->|0 V / negative| ACCG[Coin acceptor GND]
 
     ACCS[Coin acceptor SIG/COIN] --> CONDITION[12 V-compatible\noptoisolator/level shifter]
-    CONDITION --> PA6[Orange Pi PA6\nphysical pin 7]
-    V33[Orange Pi 3.3 V\nphysical pin 17] -->|Pull-up only when\nisolator requires it| PA6
+    CONDITION --> PD14[Orange Pi PD14\nphysical pin 12]
+    V33[Orange Pi 3.3 V\nphysical pin 1] -->|Pull-up only when\nisolator requires it| PD14
 
-    PA7[Orange Pi PA7\nphysical pin 29] --> DRIVER[3.3 V-compatible\nrelay input/driver]
+    PA1[Orange Pi PA1\nphysical pin 11] --> DRIVER[3.3 V-compatible\nrelay input/driver]
     DRIVER --> RELAY[Relay coil/module]
     GND[Orange Pi GND] --> DRIVER
 
@@ -202,17 +238,23 @@ continuity meter while everything is unpowered.
 
 | Orange Pi | Connect to | Notes |
 |---|---|---|
-| PA7, physical pin 29 | Relay driver/module `IN` | Input must accept 3.3 V logic |
-| GND, physical pin 30 | Relay logic `GND` | Required for non-isolated/common-ground inputs |
+| PA1, physical pin 11 | Relay driver/module `IN` | Input must accept 3.3 V logic |
+| GND, physical pin 9 or 14 | Relay logic `GND` | Required for non-isolated/common-ground inputs |
 | Rated supply | Relay module `VCC/JD-VCC` | Follow that exact module's datasheet |
 
-For the default `COINSLOT_RELAY_ACTIVE_HIGH=false`, PA7 HIGH means relay off
-and PA7 LOW means relay on. If compatible with the module, add an external
-10 kΩ pull-up from PA7 to 3.3 V to help hold OFF while the Pi's 3.3 V rail is
+For the default `COINSLOT_RELAY_ACTIVE_HIGH=false`, PA1 HIGH means relay off
+and PA1 LOW means relay on. If compatible with the module, add an external
+10 kΩ pull-up from PA1 to 3.3 V to help hold OFF while the Pi's 3.3 V rail is
 present and GPIO is high-impedance. This cannot override a GPIO latched LOW,
 and it provides no bias when the Pi is unpowered. Select a driver whose own
 input bias stays OFF across Pi/relay power-up order, test that state, and do
-not use a module whose input can back-feed PA7.
+not use a module whose input can back-feed PA1.
+
+PA1 doubles as UART2_RX. Beyond the overlay check in Section 1, be aware that
+some bootloaders briefly drive or float UART pins before the kernel takes
+over, so the external default-OFF bias and COM/NO contacts matter more on this
+pin than they would on a plain GPIO. Verify the relay stays released across a
+full cold boot, not just a warm restart.
 
 ### 5.4 Coin pulse input
 
@@ -224,10 +266,10 @@ Coin acceptor SIG and its reference
         v
 12 V-compatible optocoupler/level-shifter input
         || electrical isolation ||
-isolator OUT --------------------- PA6, physical pin 7
-isolator output GND -------------- Orange Pi GND
+isolator OUT --------------------- PD14, physical pin 12
+isolator output GND -------------- Orange Pi GND, physical pin 14
 isolator output VCC -------------- Orange Pi 3.3 V (if required)
-PA6 ------- 4.7k-10k pull-up ----- Orange Pi 3.3 V
+PD14 ------ 4.7k-10k pull-up ----- Orange Pi 3.3 V
              (only if required by the isolator output)
 ```
 
@@ -236,7 +278,7 @@ sinks or sources its pulse. Follow its manual and the isolator datasheet; do
 not guess from wire color. The referenced CH-926 manual specifically warns
 against adding a pull-up on its signal wire, so the pull-up shown above is
 only on an open-collector **isolator output**, never directly on the acceptor
-SIG wire. A direct SIG-to-PA6 connection is not part of this recommended
+SIG wire. A direct SIG-to-PD14 connection is not part of this recommended
 installation.
 
 The application watches **falling edges**, so the measured signal must idle
@@ -451,23 +493,37 @@ DHCP_RANGE_START=192.168.4.20
 DHCP_RANGE_END=192.168.4.254
 NETWORK_MASK=255.255.255.0
 
-CHECK_INTERVAL=5
+CHECK_INTERVAL=15
 PAUSE_ON_DISCONNECT=true
+ALLOW_MANUAL_PAUSE=true
+DEVICE_RETENTION_HOURS=24
+LOG_DEDUCTIONS=false
 DEFAULT_DOWNLOAD_KBPS=2048
 DEFAULT_UPLOAD_KBPS=1024
 
 COINSLOT_ENABLED=false
-COINSLOT_GPIO=6
+COINSLOT_GPIO=110
 COINSLOT_PULSES_PER_PESO=1
 COINSLOT_CLAIM_TIMEOUT=60
 COINSLOT_DEBOUNCE_MS=50
-COINSLOT_RELAY_GPIO=7
+COINSLOT_RELAY_GPIO=1
 COINSLOT_RELAY_ACTIVE_HIGH=false
 ```
+
+`COINSLOT_GPIO=110` is PD14 on physical pin 12 and `COINSLOT_RELAY_GPIO=1` is
+PA1 on physical pin 11. Re-derive both from the gpiochip base measured in
+Section 1 before trusting them.
 
 Start with `COINSLOT_ENABLED=false`. Complete the network-only validation
 before enabling physical GPIO. Bandwidth values remain stored internally in
 kbps even though the portal displays Mbps.
+
+`PAUSE_ON_DISCONNECT`, `ALLOW_MANUAL_PAUSE` and the coinslot timing values are
+**first-run defaults only**. Once the service has started, Admin → Settings
+owns them and the database wins, so change them there rather than in `.env`.
+`LOG_DEDUCTIONS=false` matters on this board because journald is RAM-backed:
+one INFO line per device per minute otherwise spends the Pi's limited memory
+on log noise, and the `time_logs` table remains the audit trail either way.
 
 Protect configuration and database files:
 
@@ -604,38 +660,53 @@ test.
    sudo test -e /sys/class/gpio/export
    ```
 
-3. Reconfirm the PA-bank gpiochip base as described in Section 1. The example
-   below is allowed only after proving PA7 is sysfs GPIO 7. Export it if needed
-   and set the default active-low OFF state atomically:
+3. Reconfirm the gpiochip base as described in Section 1, including the
+   `uart2` overlay check. The example below is allowed only after proving PA1
+   is sysfs GPIO 1. Export it if needed and set the default active-low OFF
+   state atomically:
 
    ```bash
-   sudo sh -c 'test -d /sys/class/gpio/gpio7 || echo 7 > /sys/class/gpio/export'
-   sudo sh -c 'echo high > /sys/class/gpio/gpio7/direction'
-   sudo cat /sys/class/gpio/gpio7/value
+   sudo sh -c 'test -d /sys/class/gpio/gpio1 || echo 1 > /sys/class/gpio/export'
+   sudo sh -c 'echo high > /sys/class/gpio/gpio1/direction'
+   sudo cat /sys/class/gpio/gpio1/value
    ```
 
-   The result must be `1`, and the relay must be released. If it energizes,
-   stop: the relay polarity or module input is not what the configuration
-   expects.
+   The result must be `1`, and the relay must be released. If the export fails
+   with `Device or resource busy`, a driver still owns PA1 — return to the
+   UART2 check in Section 1. If the relay energizes, stop: the relay polarity
+   or module input is not what the configuration expects.
 
 4. With no acceptor load connected, briefly energize and release the default
    active-low relay while checking COM/NO continuity. Run this as one command;
    its EXIT trap restores OFF even if the sleep is interrupted:
 
    ```bash
-   sudo sh -c 'trap "echo 1 > /sys/class/gpio/gpio7/value" EXIT INT TERM; echo 0 > /sys/class/gpio/gpio7/value; sleep 2'
-   sudo cat /sys/class/gpio/gpio7/value
+   sudo sh -c 'trap "echo 1 > /sys/class/gpio/gpio1/value" EXIT INT TERM; echo 0 > /sys/class/gpio/gpio1/value; sleep 2'
+   sudo cat /sys/class/gpio/gpio1/value
    ```
 
-5. Unexport the test pin so the application can own it:
+5. Confirm the coin input line is exportable and idles HIGH. With the isolator
+   powered but no coin inserted, PD14 must read `1`:
 
    ```bash
-   sudo sh -c 'echo 7 > /sys/class/gpio/unexport'
+   sudo sh -c 'test -d /sys/class/gpio/gpio110 || echo 110 > /sys/class/gpio/export'
+   sudo sh -c 'echo in > /sys/class/gpio/gpio110/direction'
+   sudo cat /sys/class/gpio/gpio110/value
    ```
 
-6. Repeat boot and power-cycle tests. The relay must remain released until a
+   A reading of `0` at idle means the signal is inverted or the isolator output
+   is pulled low; the application watches falling edges and would miscount.
+
+6. Unexport both test pins so the application can own them:
+
+   ```bash
+   sudo sh -c 'echo 1 > /sys/class/gpio/unexport'
+   sudo sh -c 'echo 110 > /sys/class/gpio/unexport'
+   ```
+
+7. Repeat boot and power-cycle tests. The relay must remain released until a
    portal coin claim starts. If the relay module remains powered while the
-   Orange Pi is off, verify the external PA7 default-OFF bias under that state
+   Orange Pi is off, verify the external PA1 default-OFF bias under that state
    too.
 
 For an active-high module, use `COINSLOT_RELAY_ACTIVE_HIGH=true`; its OFF
@@ -644,8 +715,8 @@ state is GPIO `0`. Verify electrically rather than assuming the setting.
 ## 14. Connect and commission the coin acceptor
 
 1. Power everything off.
-2. Complete the fused COM/NO power wiring and the conditioned PA6 pulse
-   wiring from Section 5.
+2. Complete the fused COM/NO power wiring and the conditioned PD14 (pin 12)
+   pulse wiring from Section 5.
 3. Check for shorts between 12 V, 5 V, 3.3 V, and ground before powering.
 4. Power the Orange Pi first. Confirm the relay remains released.
 5. Enable coinslot support:
@@ -657,7 +728,7 @@ state is GPIO `0`. Verify electrically rather than assuming the setting.
    sudo journalctl -u pisowifi -f
    ```
 
-6. Confirm the service log reports SIG GPIO 6 and relay GPIO 7 without a
+6. Confirm the service log reports SIG GPIO 110 and relay GPIO 1 without a
    permission/export error.
 7. Confirm the acceptor remains unpowered before a claim.
 8. From a connected phone, tap **Start coin session**. Confirm:
@@ -688,7 +759,9 @@ train; too little debounce can count electrical noise as money.
       graceful `systemctl stop pisowifi`; this remains mandatory even though
       automated tests cover cleanup registration and ordering.
 - [ ] Relay closes only during a valid phone claim.
-- [ ] PA6 idles near 3.3 V and pulses LOW without ever exceeding 3.3 V.
+- [ ] PD14 (pin 12) idles near 3.3 V and pulses LOW without ever exceeding
+      3.3 V.
+- [ ] The `uart2` overlay is absent, so nothing contends for PA1 (pin 11).
 - [ ] Every denomination produces the configured pulse/peso total.
 - [ ] Reboot restores the database and reconciles active user access.
 - [ ] Enclosure, fuse, insulation, cooling, and strain relief are complete.
@@ -746,7 +819,10 @@ Confirm `INTERNET_INTERFACE` is the USB uplink, not the client LAN.
 
 Disconnect the acceptor immediately. Confirm this checkout includes the relay
 initialization regression fix, verify `COINSLOT_RELAY_ACTIVE_HIGH`, check the
-external default-OFF bias, and test PA7 with the acceptor disconnected.
+external default-OFF bias, and test PA1 with the acceptor disconnected. On
+pin 11 specifically, also rule out the bootloader touching UART2_RX: if the
+click happens early in boot rather than when the service starts, that is the
+likely cause and the external pull-up plus COM/NO wiring is what must hold it.
 
 ### Relay never releases after a stop or application crash
 
@@ -760,7 +836,11 @@ watchdog/timer if guaranteed release after any failure is required.
 ### Coin pulses are missing or over-counted
 
 - Confirm a claim is active; pulses without a claim are intentionally ignored.
-- Measure SIG voltage and polarity at PA6.
+- Confirm `COINSLOT_GPIO` really is PD14: an off-by-one bank calculation lands
+  on a neighbouring line that simply never changes.
+- Measure SIG voltage and polarity at PD14 (pin 12).
+- If miscounts only occur while the relay is energized, separate the pin 11
+  and pin 12 wiring as described in Section 4.
 - Confirm idle HIGH and falling-edge pulses.
 - Verify `COINSLOT_PULSES_PER_PESO` and acceptor programming.
 - Compare pulse spacing with `COINSLOT_DEBOUNCE_MS`.
