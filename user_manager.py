@@ -1110,7 +1110,11 @@ class UserManager:
     def get_revenue_summary(self):
         with self._with_conn(
                 'Calculating revenue summary',
-                on_error=lambda: {'day': 0.0, 'week': 0.0, 'month': 0.0},
+                on_error=lambda: {
+                    'day': 0.0, 'week': 0.0, 'month': 0.0,
+                    'day_adjustments': 0.0, 'week_adjustments': 0.0,
+                    'month_adjustments': 0.0,
+                },
         ) as (conn, out):
             row = conn.execute('''
                 SELECT
@@ -1118,16 +1122,40 @@ class UserManager:
                         WHEN date(created_at, 'localtime') = date('now', 'localtime')
                         THEN amount ELSE 0
                     END), 0) AS day,
+                    -- Calendar-aligned, like the day and month buckets:
+                    -- seven whole days ending today. Cutting at the current
+                    -- clock time six days back excluded that day's earlier
+                    -- earnings while still counting the adjustments recorded
+                    -- later the same evening, which drove the total negative
+                    -- and made it drift with the hour the page was opened.
                     COALESCE(SUM(CASE
-                        WHEN datetime(created_at, 'localtime')
-                             >= datetime('now', 'localtime', '-6 days')
+                        WHEN date(created_at, 'localtime')
+                             >= date('now', 'localtime', '-6 days')
                         THEN amount ELSE 0
                     END), 0) AS week,
                     COALESCE(SUM(CASE
                         WHEN strftime('%Y-%m', created_at, 'localtime')
                              = strftime('%Y-%m', 'now', 'localtime')
                         THEN amount ELSE 0
-                    END), 0) AS month
+                    END), 0) AS month,
+                    -- Manual corrections as positive magnitudes, so a card
+                    -- that nets out low or negative can explain why.
+                    COALESCE(SUM(CASE
+                        WHEN amount < 0 AND date(created_at, 'localtime')
+                             = date('now', 'localtime')
+                        THEN -amount ELSE 0
+                    END), 0) AS day_adjustments,
+                    COALESCE(SUM(CASE
+                        WHEN amount < 0 AND date(created_at, 'localtime')
+                             >= date('now', 'localtime', '-6 days')
+                        THEN -amount ELSE 0
+                    END), 0) AS week_adjustments,
+                    COALESCE(SUM(CASE
+                        WHEN amount < 0
+                             AND strftime('%Y-%m', created_at, 'localtime')
+                                 = strftime('%Y-%m', 'now', 'localtime')
+                        THEN -amount ELSE 0
+                    END), 0) AS month_adjustments
                 FROM transactions
                 WHERE amount != 0
                   -- Only rows that can land in one of the three buckets. The
@@ -1135,14 +1163,20 @@ class UserManager:
                   -- rescans every transaction ever recorded. Comparing the raw
                   -- UTC column (not datetime(created_at,'localtime')) is what
                   -- lets idx_transactions_created_at do the work.
+                  -- 'start of day' must match the week bucket above, or on the
+                  -- first days of a month this bound clips rows the week needs.
                   AND created_at >= datetime(MIN(
                         datetime('now', 'localtime', 'start of month'),
-                        datetime('now', 'localtime', '-6 days')), 'utc')
+                        datetime('now', 'localtime', '-6 days',
+                                 'start of day')), 'utc')
             ''').fetchone()
             out.result = {
                 'day': float(row['day']),
                 'week': float(row['week']),
                 'month': float(row['month']),
+                'day_adjustments': float(row['day_adjustments']),
+                'week_adjustments': float(row['week_adjustments']),
+                'month_adjustments': float(row['month_adjustments']),
             }
         return out.result
 

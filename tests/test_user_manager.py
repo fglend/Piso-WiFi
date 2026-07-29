@@ -474,6 +474,91 @@ def test_get_users_with_balance_includes_last_connection(user_manager):
     assert users[0]['last_seen_at'] is not None
 
 
+def _stamp_last_transaction(user_manager, modifier):
+    """Backdate the most recent transaction, e.g. '-6 days','start of day'."""
+    conn = user_manager._connect()
+    try:
+        conn.execute(f'''
+            UPDATE transactions
+            SET created_at = datetime(datetime('now','localtime',{modifier}),'utc')
+            WHERE id = (SELECT MAX(id) FROM transactions)
+        ''')
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_week_includes_the_whole_seventh_day(user_manager):
+    """The regression: the window used to start at the current clock time six
+    days back, so money earned earlier that day fell outside 'this week' while
+    adjustments recorded later the same evening stayed inside."""
+    user_manager.add_time(MAC, 100, 10)
+    _stamp_last_transaction(user_manager, "'-6 days','start of day','+30 minutes'")
+
+    summary = user_manager.get_revenue_summary()
+    assert summary['week'] == 100
+    assert summary['day'] == 0        # not today
+
+
+def test_week_excludes_the_eighth_day(user_manager):
+    user_manager.add_time(MAC, 100, 10)
+    _stamp_last_transaction(user_manager, "'-7 days','start of day','-1 minutes'")
+    assert user_manager.get_revenue_summary()['week'] == 0
+
+
+def test_week_boundary_is_stable_across_the_day(user_manager):
+    """Same data must give the same week total whatever time it is read."""
+    user_manager.add_time(MAC, 100, 10)
+    _stamp_last_transaction(user_manager, "'-6 days','start of day','+1 minutes'")
+    assert user_manager.get_revenue_summary()['week'] == 100
+    assert user_manager.get_revenue_summary()['week'] == 100
+
+
+def test_buckets_nest_day_within_week(user_manager):
+    user_manager.add_time(MAC, 45, 10)                  # today
+    user_manager.add_time(OTHER_MAC, 200, 10)
+    _stamp_last_transaction(user_manager, "'-3 days'")   # this week, not today
+    summary = user_manager.get_revenue_summary()
+    assert summary['day'] == 45
+    assert summary['week'] == 245
+    assert summary['month'] >= summary['day']
+
+
+def test_summary_reports_adjustment_magnitudes(user_manager):
+    user_manager.add_time(MAC, 100, 10)
+    user_manager.record_revenue_adjustment(30)
+
+    summary = user_manager.get_revenue_summary()
+    assert summary['day'] == 70                  # netted
+    assert summary['day_adjustments'] == 30      # positive magnitude
+    assert summary['week_adjustments'] == 30
+    assert summary['month_adjustments'] == 30
+
+
+def test_week_can_be_negative_when_adjustments_dominate(user_manager):
+    """Honest arithmetic: heavy corrections may legitimately net below zero."""
+    user_manager.add_time(MAC, 10, 10)
+    user_manager.record_revenue_adjustment(500)
+    summary = user_manager.get_revenue_summary()
+    assert summary['week'] == -490
+    assert summary['week_adjustments'] == 500
+
+
+def test_revenue_summary_uses_the_created_at_index(user_manager):
+    conn = user_manager._connect()
+    try:
+        plan = ' '.join(
+            str(tuple(row)) for row in conn.execute(
+                "EXPLAIN QUERY PLAN SELECT 1 FROM transactions "
+                "WHERE amount != 0 AND created_at >= datetime(MIN("
+                "datetime('now','localtime','start of month'),"
+                "datetime('now','localtime','-6 days','start of day')),'utc')"
+            ).fetchall())
+    finally:
+        conn.close()
+    assert 'idx_transactions_created_at' in plan, plan
+
+
 def test_revenue_adjustment_reduces_summary(user_manager):
     user_manager.add_time(MAC, 50, 600, source='coin')
     assert user_manager.get_revenue_summary()['day'] == 50

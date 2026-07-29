@@ -16,16 +16,28 @@
         <div class="metric-label">Revenue Today</div>
         <div class="metric-value" id="revenue-day">₱{{ '%.2f'|format(revenue.day) }}</div>
         <div class="muted small">From paid top-ups today</div>
+        <div class="muted small" id="revenue-day-adjustments"
+             {% if not revenue.day_adjustments %}hidden{% endif %}>
+            net of ₱{{ '%.2f'|format(revenue.day_adjustments) }} adjustments
+        </div>
     </div>
     <div class="metric">
         <div class="metric-label">Revenue This Week</div>
         <div class="metric-value" id="revenue-week">₱{{ '%.2f'|format(revenue.week) }}</div>
         <div class="muted small">Last 7 days including today</div>
+        <div class="muted small" id="revenue-week-adjustments"
+             {% if not revenue.week_adjustments %}hidden{% endif %}>
+            net of ₱{{ '%.2f'|format(revenue.week_adjustments) }} adjustments
+        </div>
     </div>
     <div class="metric">
         <div class="metric-label">Revenue This Month</div>
         <div class="metric-value" id="revenue-month">₱{{ '%.2f'|format(revenue.month) }}</div>
         <div class="muted small">Current calendar month</div>
+        <div class="muted small" id="revenue-month-adjustments"
+             {% if not revenue.month_adjustments %}hidden{% endif %}>
+            net of ₱{{ '%.2f'|format(revenue.month_adjustments) }} adjustments
+        </div>
     </div>
 </div>
 
@@ -263,6 +275,13 @@
                 setText('revenue-day', peso(data.revenue.day));
                 setText('revenue-week', peso(data.revenue.week));
                 setText('revenue-month', peso(data.revenue.month));
+                ['day', 'week', 'month'].forEach(function (bucket) {
+                    var amount = Number(data.revenue[bucket + '_adjustments'] || 0);
+                    var line = document.getElementById('revenue-' + bucket + '-adjustments');
+                    if (!line) return;
+                    line.hidden = amount === 0;
+                    line.textContent = 'net of ' + peso(amount) + ' adjustments';
+                });
                 setText('device-count', data.device_count);
                 setText('active-device-count', data.active_device_count);
                 setText('live-rate', Number(data.minutes_per_peso || 0).toLocaleString(undefined, {
