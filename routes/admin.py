@@ -173,6 +173,8 @@ def update_settings():
         # presence is the value.
         'pause_on_disconnect': (
             '1' if request.form.get('pause_on_disconnect') else '0'),
+        'allow_manual_pause': (
+            '1' if request.form.get('allow_manual_pause') else '0'),
     }
 
     settings_saved = svc.user_manager.update_app_settings(values)

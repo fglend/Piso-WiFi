@@ -128,7 +128,7 @@ def test_settings_toggle_survives_refresh(admin_client, csrf_token, services):
 
 
 def test_pause_button_shown_and_works_when_enabled(client, csrf_token, services):
-    services.settings.pause_on_disconnect = True
+    services.settings.allow_manual_pause = True
     services.user_manager.add_time(MAC, 5, 25)
 
     assert b'Pause my time' in client.get('/').data
@@ -137,7 +137,7 @@ def test_pause_button_shown_and_works_when_enabled(client, csrf_token, services)
 
 
 def test_pause_hidden_and_rejected_when_disabled(client, csrf_token, services):
-    services.settings.pause_on_disconnect = False
+    services.settings.allow_manual_pause = False
     services.user_manager.add_time(MAC, 5, 25)
 
     assert b'Pause my time' not in client.get('/').data
@@ -145,14 +145,26 @@ def test_pause_hidden_and_rejected_when_disabled(client, csrf_token, services):
     assert services.user_manager.is_paused(MAC) is False
 
 
+def test_manual_pause_available_while_continuation_is_on(client, csrf_token, services):
+    """The headline combination: the clock runs while a device is away, but a
+    customer who pauses before leaving stops their own meter."""
+    services.settings.pause_on_disconnect = False   # continuation
+    services.settings.allow_manual_pause = True     # but pausing is offered
+    services.user_manager.add_time(MAC, 5, 25)
+
+    assert b'Pause my time' in client.get('/').data
+    post(client, '/pause', csrf_token)
+    assert services.user_manager.is_paused(MAC) is True
+
+
 def test_resume_still_available_when_pausing_disabled(client, csrf_token, services):
     """A device paused before the operator flipped the switch must not be
     stranded with a frozen balance and no internet."""
-    services.settings.pause_on_disconnect = True
+    services.settings.allow_manual_pause = True
     services.user_manager.add_time(MAC, 5, 25)
     post(client, '/pause', csrf_token)
 
-    services.settings.pause_on_disconnect = False
+    services.settings.allow_manual_pause = False
     assert b'Resume my time' in client.get('/').data
     post(client, '/resume', csrf_token)
     assert services.user_manager.is_paused(MAC) is False

@@ -85,6 +85,7 @@ class Services:
             # policy from the settings page. The .env value is only the
             # first-run default; the database wins after that.
             'pause_on_disconnect': '1' if self.settings.pause_on_disconnect else '0',
+            'allow_manual_pause': '1' if self.settings.allow_manual_pause else '0',
         }
 
     def refresh_runtime_settings(self):
@@ -99,6 +100,8 @@ class Services:
         self.settings.default_upload_kbps = int(values['default_upload_kbps'])
         self.settings.pause_on_disconnect = _as_bool(
             values['pause_on_disconnect'])
+        self.settings.allow_manual_pause = _as_bool(
+            values['allow_manual_pause'])
         return values
 
     def _init_network_controller(self, manage_hardware, max_retries=3):

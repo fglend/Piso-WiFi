@@ -69,7 +69,7 @@ def index():
         rates=rates,
         posts=posts,
         coinslot_enabled=svc.coinslot is not None,
-        pause_enabled=svc.settings.pause_on_disconnect,
+        pause_enabled=svc.settings.allow_manual_pause,
         coin_minutes_per_peso=svc.settings.minutes_per_peso,
         coin_claim_timeout=svc.settings.coinslot_claim_timeout,
         portal_title=svc.settings.portal_title,
@@ -197,9 +197,9 @@ def request_upgrade():
 def pause():
     svc = _services()
     # Hiding the button is not enough: the endpoint stays reachable, so the
-    # PAUSE_ON_DISCONNECT switch has to be enforced here too. Resume is left
-    # open on purpose - an already-paused device must be able to come back.
-    if not svc.settings.pause_on_disconnect:
+    # switch has to be enforced here too. Resume is left open on purpose - an
+    # already-paused device must be able to come back.
+    if not svc.settings.allow_manual_pause:
         flash('Pausing is not available on this network.', 'error')
         return redirect(url_for('portal.index'))
     mac = _client_mac()

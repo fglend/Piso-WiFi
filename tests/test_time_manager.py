@@ -31,6 +31,26 @@ def test_offline_device_keeps_burning_time_when_continuation_on(
     mock_network.set_bandwidth_limit.assert_not_called()
 
 
+def test_manual_pause_beats_continuation(user_manager, mock_network, settings):
+    """Paused before leaving: the clock must stay frozen while away, even
+    though continuation is metering every other absent device."""
+    settings.pause_on_disconnect = False
+    tm = make_tm(user_manager, mock_network, settings)
+    user_manager.add_time(MAC, 5, 25)
+    user_manager.set_last_deduction(MAC, 1000.0)
+    user_manager.set_paused(MAC, True)
+
+    tm._meter_offline_devices(set(), 1000.0 + 7200)  # two hours away
+    assert user_manager.check_balance(MAC) == 25
+
+    # ...and resuming restarts the clock from now, with no back-charge
+    user_manager.set_paused(MAC, False)
+    user_manager.set_last_deduction(MAC, 8200.0)
+    tm._next_offline_sweep_at = 0.0
+    tm._meter_offline_devices(set(), 8200.0 + 120)
+    assert user_manager.check_balance(MAC) == 23
+
+
 def test_offline_device_blocked_when_balance_runs_out(
         user_manager, mock_network, settings):
     settings.pause_on_disconnect = False

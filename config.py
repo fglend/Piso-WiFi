@@ -113,6 +113,12 @@ class Settings:
     # while it is disconnected (only the portal Pause button freezes it), so
     # this defaults off. Set PAUSE_ON_DISCONNECT=true to auto-freeze on drop.
     pause_on_disconnect: bool = field(default_factory=lambda: _env_bool('PAUSE_ON_DISCONNECT', False))
+    # Whether customers get the portal's "Pause my time" button. Independent of
+    # PAUSE_ON_DISCONNECT: the common setup is automatic pausing off (a package
+    # expires on elapsed time) with manual pausing on, so a customer who knows
+    # they are leaving can deliberately stop their own clock first.
+    allow_manual_pause: bool = field(
+        default_factory=lambda: _env_bool('ALLOW_MANUAL_PAUSE', True))
     # Spent devices idle this long are deleted, so the rows left behind by
     # rotated randomized MACs don't accumulate forever. A purged device is
     # simply unknown again (zero balance); set to 0 to keep every row.

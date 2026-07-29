@@ -76,18 +76,37 @@
                 <input id="pause_on_disconnect" name="pause_on_disconnect" type="checkbox"
                        value="1" {% if pausing_on %}checked{% endif %}>
                 <div>
-                    <label for="pause_on_disconnect" class="mb-0">Pause time when a device disconnects</label>
+                    <label for="pause_on_disconnect" class="mb-0">Pause time automatically when a device disconnects</label>
                     <div class="muted small mt-2">
                         <strong>On</strong> &mdash; time is screen time. A customer's
-                        countdown freezes the moment they leave the network and
-                        resumes when they come back. Customers also get the
-                        <em>Pause my time</em> button on the portal.
+                        countdown freezes by itself the moment they leave the
+                        network and resumes when they come back.
                     </div>
                     <div class="muted small mt-2">
                         <strong>Off</strong> &mdash; time is elapsed time. The countdown
                         keeps running while the device is away, so a day, week or
                         monthly package expires on schedule instead of lasting for
                         months of occasional use. Shop downtime is never charged.
+                    </div>
+                </div>
+            </div>
+
+            {% set manual_pause_on = app_settings.allow_manual_pause in ('1', 'true', 'yes', 'on') %}
+            <div class="setting-toggle mb-3">
+                <input id="allow_manual_pause" name="allow_manual_pause" type="checkbox"
+                       value="1" {% if manual_pause_on %}checked{% endif %}>
+                <div>
+                    <label for="allow_manual_pause" class="mb-0">Let customers pause their own time</label>
+                    <div class="muted small mt-2">
+                        Shows the <em>Pause my time</em> button on the portal. A customer
+                        who taps it stops their countdown and their internet until they
+                        tap Resume &mdash; this works even when automatic pausing above
+                        is off, so someone who knows they are leaving can deliberately
+                        stop their own clock first.
+                    </div>
+                    <div class="muted small mt-2">
+                        Turn this off if a package should always expire on elapsed time
+                        with no way for a customer to stretch it.
                     </div>
                 </div>
             </div>
