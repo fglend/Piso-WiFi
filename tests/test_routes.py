@@ -127,6 +127,22 @@ def test_settings_toggle_survives_refresh(admin_client, csrf_token, services):
     assert services.settings.pause_on_disconnect is False
 
 
+def test_balance_tab_flags_paused_devices(admin_client, services):
+    services.user_manager.add_time(MAC, 5, 25)
+    assert b'Paused' not in admin_client.get('/admin').data
+
+    services.user_manager.set_paused(MAC, True)
+    body = admin_client.get('/admin').data
+    assert b'Paused' in body
+    assert b'clock stopped by the customer' in body
+
+
+def test_balance_tab_shows_duration_pass_expiry(admin_client, services):
+    code = services.user_manager.create_voucher(30 * 1440, duration_days=30)
+    services.user_manager.redeem_voucher(code, MAC)
+    assert b'pass until' in admin_client.get('/admin').data
+
+
 def test_create_duration_pass_voucher(admin_client, csrf_token, services):
     resp = post(admin_client, '/vouchers', csrf_token, mode='duration',
                 duration_days=30, duration_price=500, duration_pausable='1')

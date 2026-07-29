@@ -888,7 +888,8 @@ class UserManager:
         with self._with_conn('Listing users with balance',
                              default=[]) as (conn, out):
             rows = conn.execute('''
-                SELECT u.mac_address, u.time_balance, u.plan,
+                SELECT u.mac_address, u.time_balance, u.plan, u.paused,
+                       datetime(u.expires_at, 'localtime') AS expires_at,
                        dc.hostname, dc.ip_address,
                        datetime(dc.last_seen_at, 'localtime') AS last_seen_at
                 FROM users u

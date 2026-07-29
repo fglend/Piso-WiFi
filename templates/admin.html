@@ -213,12 +213,23 @@
                     <td class="text-break">{{ device.mac_address }}</td>
                     <td>{{ device.hostname or 'Unknown' }}</td>
                     <td>{{ device.ip_address or 'Unknown' }}</td>
-                    <td>{{ '%g'|format(device.time_balance) }}</td>
                     <td>
+                        {{ '%g'|format(device.time_balance) }}
+                        {% if device.expires_at %}
+                        <div class="muted small">pass until {{ device.expires_at }}</div>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if device.paused %}
+                        <span class="badge badge-warn">Paused</span>
+                        {% endif %}
                         {% if device.mac_address in connected_macs %}
                         <span class="badge badge-info">Connected</span>
                         {% else %}
                         <span class="badge badge-muted">Offline</span>
+                        {% endif %}
+                        {% if device.paused %}
+                        <div class="muted small">clock stopped by the customer</div>
                         {% endif %}
                     </td>
                     <td>{{ device.last_seen_at or '-' }}</td>
