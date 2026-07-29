@@ -101,7 +101,11 @@
         <div class="metric metric-hero">
             <div class="metric-label">Time balance</div>
             <div class="metric-value" id="balance-minutes">{{ '%.1f'|format(device.time_balance) }}</div>
+            {% if device.expires_at %}
+            <div class="muted small">minutes &mdash; pass valid until<br>{{ device.expires_at }}</div>
+            {% else %}
             <div class="muted small">minutes remaining</div>
+            {% endif %}
         </div>
         <div class="metric">
             <div class="metric-label">Plan</div>

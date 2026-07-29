@@ -219,6 +219,18 @@ class UserManager:
                 ON time_logs (deducted_at)
             ''')
 
+            # Duration passes ("valid for 30 days from redemption"). expires_at
+            # is the authority for these devices; time_balance is kept in sync
+            # with it so every existing balance check, block and display keeps
+            # working unchanged. paused_at lets a pause push the deadline back.
+            self._add_column_if_missing(c, 'users', 'expires_at', 'TIMESTAMP')
+            self._add_column_if_missing(c, 'users', 'paused_at', 'TIMESTAMP')
+            self._add_column_if_missing(
+                c, 'users', 'pausable', 'INTEGER NOT NULL DEFAULT 1')
+            self._add_column_if_missing(c, 'vouchers', 'duration_days', 'REAL')
+            self._add_column_if_missing(
+                c, 'vouchers', 'pausable', 'INTEGER NOT NULL DEFAULT 1')
+
             # Additive column migrations for databases created by older versions
             self._add_column_if_missing(c, 'transactions', 'source', "TEXT DEFAULT 'cash'")
             self._add_column_if_missing(c, 'vouchers', 'price', 'REAL DEFAULT 0')
@@ -603,6 +615,119 @@ class UserManager:
         finally:
             conn.close()
 
+    # --- duration passes ------------------------------------------------
+
+    def grant_duration(self, mac_address, days, pausable=True, source='voucher'):
+        """Give a device a pass valid for `days` from now.
+
+        Stacking extends an unexpired pass rather than truncating it. The
+        wall-clock deadline is the authority; time_balance is mirrored from it
+        by sync_expiring_devices() so the portal countdown, the zero-balance
+        block and the idle-device purge all keep working untouched.
+        """
+        mac_address = (mac_address or '').strip().upper()
+        if days <= 0:
+            return None
+
+        with self._with_conn(f'Granting {days}d pass to {mac_address}') as (conn, out):
+            row = conn.execute(
+                'SELECT id, expires_at FROM users WHERE mac_address = ?',
+                (mac_address,)).fetchone()
+            if row is None:
+                plan = self.get_plans().get('default', {
+                    'download_kbps': 2048, 'upload_kbps': 1024})
+                conn.execute('''
+                    INSERT INTO users (mac_address, time_balance, status,
+                                       download_limit, upload_limit, plan)
+                    VALUES (?, 0, 'active', ?, ?, 'default')
+                ''', (mac_address, plan['download_kbps'], plan['upload_kbps']))
+
+            # Extend from whichever is later: now, or an unexpired deadline.
+            conn.execute('''
+                UPDATE users
+                SET expires_at = datetime(
+                        MAX(COALESCE(expires_at, datetime('now')), datetime('now')),
+                        '+' || ? || ' seconds'),
+                    pausable = ?,
+                    paused = 0,
+                    paused_at = NULL,
+                    status = 'active'
+                WHERE mac_address = ?
+            ''', (int(float(days) * 86400), 1 if pausable else 0, mac_address))
+
+            deadline = conn.execute(
+                'SELECT expires_at FROM users WHERE mac_address = ?',
+                (mac_address,)).fetchone()['expires_at']
+            conn.execute('''
+                UPDATE users
+                SET time_balance = MAX(0, ROUND(
+                        (julianday(expires_at) - julianday('now')) * 1440.0, 2))
+                WHERE mac_address = ?
+            ''', (mac_address,))
+            conn.execute('INSERT INTO transactions '
+                         '(user_id, amount, minutes, source) VALUES '
+                         '((SELECT id FROM users WHERE mac_address = ?), 0, 0, ?)',
+                         (mac_address, source))
+            out.result = deadline
+
+        if out.result:
+            # A fresh pass must not be back-charged by the elapsed-time meter
+            self.clear_session(mac_address)
+            self.logger.info(
+                f"Granted {days}d pass to {mac_address} (until {out.result}, "
+                f"pausable={bool(pausable)})")
+        return out.result
+
+    def sync_expiring_devices(self):
+        """Mirror expires_at into time_balance for every duration pass.
+
+        One statement for all of them rather than a write per device, and the
+        caller runs it on a slow cadence - a wall-clock deadline needs no
+        finer resolution than the minute the portal displays.
+
+        Returns (tracked_macs, expired_macs).
+        """
+        with self._with_conn('Syncing duration passes',
+                             default=([], [])) as (conn, out):
+            conn.execute('''
+                UPDATE users
+                SET time_balance = MAX(0, ROUND(
+                        (julianday(expires_at) - julianday('now')) * 1440.0, 2)),
+                    status = CASE
+                        WHEN julianday(expires_at) > julianday('now')
+                        THEN 'active' ELSE 'inactive' END
+                WHERE expires_at IS NOT NULL AND paused = 0
+            ''')
+            rows = conn.execute('''
+                SELECT mac_address, time_balance
+                FROM users WHERE expires_at IS NOT NULL
+            ''').fetchall()
+            out.result = (
+                [row['mac_address'] for row in rows],
+                [row['mac_address'] for row in rows
+                 if row['time_balance'] <= 0],
+            )
+        return out.result
+
+    def get_expiry(self, mac_address):
+        """Local-time deadline string for a duration pass, or None."""
+        with self._with_conn('Reading pass expiry') as (conn, out):
+            row = conn.execute(
+                "SELECT datetime(expires_at, 'localtime') AS expires_at "
+                'FROM users WHERE mac_address = ? AND expires_at IS NOT NULL',
+                (mac_address,)).fetchone()
+            out.result = row['expires_at'] if row else None
+        return out.result
+
+    def is_pausable(self, mac_address):
+        """False only when the device's current pass forbids pausing."""
+        with self._with_conn('Reading pausable flag', default=True) as (conn, out):
+            row = conn.execute(
+                'SELECT pausable FROM users WHERE mac_address = ?',
+                (mac_address,)).fetchone()
+            out.result = bool(row['pausable']) if row else True
+        return out.result
+
     def transfer_balance(self, from_mac, to_mac):
         """Move a device's remaining time to another MAC.
 
@@ -621,7 +746,8 @@ class UserManager:
         with self._with_conn(
                 f'Transferring balance {from_mac} -> {to_mac}') as (conn, out):
             source = conn.execute(
-                'SELECT id, time_balance FROM users WHERE mac_address = ?',
+                'SELECT id, time_balance, expires_at, pausable '
+                'FROM users WHERE mac_address = ?',
                 (from_mac,)).fetchone()
             if source is not None and source['time_balance'] > 0:
                 minutes = source['time_balance']
@@ -636,14 +762,28 @@ class UserManager:
                         'UPDATE users SET mac_address = ? WHERE id = ?',
                         (to_mac, source['id']))
                 else:
+                    # Carry any duration pass across too, or a monthly
+                    # customer whose MAC rotated would be handed loose
+                    # minutes that the elapsed-time meter then drains. The
+                    # target keeps its own deadline if it is already later.
                     conn.execute('''
                         UPDATE users
-                        SET time_balance = time_balance + ?, status = 'active'
+                        SET time_balance = time_balance + ?,
+                            status = 'active',
+                            expires_at = CASE
+                                WHEN ? IS NOT NULL
+                                     AND (expires_at IS NULL OR expires_at < ?)
+                                THEN ? ELSE expires_at END,
+                            pausable = CASE WHEN ? IS NOT NULL
+                                THEN ? ELSE pausable END
                         WHERE id = ?
-                    ''', (minutes, target['id']))
+                    ''', (minutes, source['expires_at'], source['expires_at'],
+                          source['expires_at'], source['expires_at'],
+                          source['pausable'], target['id']))
                     conn.execute('''
                         UPDATE users
-                        SET time_balance = 0, status = 'inactive'
+                        SET time_balance = 0, status = 'inactive',
+                            expires_at = NULL, paused_at = NULL
                         WHERE id = ?
                     ''', (source['id'],))
 
@@ -828,8 +968,12 @@ class UserManager:
 
     # --- vouchers -------------------------------------------------------------
 
-    def create_voucher(self, minutes, price=0):
+    def create_voucher(self, minutes, price=0, duration_days=None, pausable=True):
         """Create a voucher worth the given minutes; returns the code.
+
+        duration_days turns it into a pass instead: redeeming stamps a
+        wall-clock deadline that many days out, rather than crediting minutes.
+        pausable=False means that pass ignores the portal's pause button.
 
         price > 0 marks a paid voucher: the sale is recorded as revenue at
         creation time (cash changed hands when the voucher was sold), in the
@@ -844,9 +988,11 @@ class UserManager:
                     ''.join(secrets.choice(alphabet) for _ in range(4)) for _ in range(2))
                 try:
                     conn.execute(
-                        'INSERT INTO vouchers (code, minutes, price) '
-                        'VALUES (?, ?, ?)',
-                        (code, minutes, price))
+                        'INSERT INTO vouchers '
+                        '(code, minutes, price, duration_days, pausable) '
+                        'VALUES (?, ?, ?, ?, ?)',
+                        (code, minutes, price, duration_days,
+                         1 if pausable else 0))
                     if price > 0:
                         conn.execute('''
                             INSERT INTO transactions
@@ -872,11 +1018,17 @@ class UserManager:
             conn.close()
 
     def redeem_voucher(self, code, mac_address):
-        """Redeem a voucher for a device; returns minutes granted or None."""
+        """Redeem a voucher for a device.
+
+        Returns a dict describing what was granted, or None when the code is
+        unknown or already used:
+            {'minutes': float, 'duration_days': float|None, 'expires_at': str|None}
+        """
         conn = self._connect()
         try:
             row = conn.execute(
-                'SELECT id, minutes FROM vouchers WHERE code = ? AND redeemed_at IS NULL',
+                'SELECT id, minutes, duration_days, pausable FROM vouchers '
+                'WHERE code = ? AND redeemed_at IS NULL',
                 (code.strip().upper(),)).fetchone()
             if not row:
                 return None
@@ -894,13 +1046,23 @@ class UserManager:
         finally:
             conn.close()
 
+        if row['duration_days']:
+            deadline = self.grant_duration(
+                mac_address, row['duration_days'], bool(row['pausable']))
+            if deadline:
+                return {'minutes': self.check_balance(mac_address),
+                        'duration_days': row['duration_days'],
+                        'expires_at': self.get_expiry(mac_address)}
+            return None
+
         if self.add_time(mac_address, 0, row['minutes'], source='voucher'):
-            return row['minutes']
+            return {'minutes': row['minutes'], 'duration_days': None,
+                    'expires_at': None}
         return None
 
     def get_vouchers(self, include_redeemed=False):
         with self._with_conn('Listing vouchers', default=[]) as (conn, out):
-            query = ("SELECT code, minutes, price, "
+            query = ("SELECT code, minutes, price, duration_days, pausable, "
                      "datetime(created_at, 'localtime') AS created_at, "
                      "redeemed_by, "
                      "datetime(redeemed_at, 'localtime') AS redeemed_at "
@@ -1025,11 +1187,32 @@ class UserManager:
             conn.close()
 
     def set_paused(self, mac_address, paused):
-        """Manually pause/resume a device's metering. Returns True on success."""
+        """Manually pause/resume a device's metering. Returns True on success.
+
+        For a duration pass the deadline moves out by however long the device
+        stayed paused, so the customer keeps the full span they paid for
+        instead of watching it burn while their internet was off.
+        """
         with self._with_conn('Setting pause state', default=False) as (conn, out):
-            cursor = conn.execute(
-                'UPDATE users SET paused = ? WHERE mac_address = ?',
-                (1 if paused else 0, mac_address))
+            if paused:
+                cursor = conn.execute('''
+                    UPDATE users
+                    SET paused = 1, paused_at = datetime('now')
+                    WHERE mac_address = ?
+                ''', (mac_address,))
+            else:
+                cursor = conn.execute('''
+                    UPDATE users
+                    SET paused = 0,
+                        expires_at = CASE
+                            WHEN expires_at IS NOT NULL AND paused_at IS NOT NULL
+                            THEN datetime(expires_at, '+' ||
+                                 (strftime('%s', 'now') - strftime('%s', paused_at))
+                                 || ' seconds')
+                            ELSE expires_at END,
+                        paused_at = NULL
+                    WHERE mac_address = ?
+                ''', (mac_address,))
             out.result = cursor.rowcount > 0
         return out.result
 

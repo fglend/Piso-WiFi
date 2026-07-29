@@ -53,7 +53,8 @@ def index():
             'upload_limit': svc.settings.default_upload_kbps,
             'plan': 'default', 'upgrade_requested': False, 'paused': False,
         }
-        device = {'mac_address': mac, **info}
+        device = {'mac_address': mac, **info,
+                  'expires_at': svc.user_manager.get_expiry(mac)}
     rates = [
         {'pesos': pesos, 'label': format_duration(minutes)}
         for pesos, minutes in svc.user_manager.get_rates().items()
@@ -69,7 +70,9 @@ def index():
         rates=rates,
         posts=posts,
         coinslot_enabled=svc.coinslot is not None,
-        pause_enabled=svc.settings.allow_manual_pause,
+        # A pass sold as non-pausable overrides the shop-wide setting
+        pause_enabled=(svc.settings.allow_manual_pause
+                       and (mac is None or svc.user_manager.is_pausable(mac))),
         coin_minutes_per_peso=svc.settings.minutes_per_peso,
         coin_claim_timeout=svc.settings.coinslot_claim_timeout,
         portal_title=svc.settings.portal_title,
@@ -120,8 +123,8 @@ def redeem():
         flash('Please enter a voucher code', 'error')
         return redirect(url_for('portal.index'))
 
-    minutes = svc.user_manager.redeem_voucher(code, mac)
-    if minutes is None:
+    granted = svc.user_manager.redeem_voucher(code, mac)
+    if granted is None:
         flash('Invalid or already used voucher code', 'error')
     else:
         svc.network_controller.unblock_mac(mac)
@@ -129,7 +132,12 @@ def redeem():
         if info:
             svc.network_controller.set_bandwidth_limit(
                 mac, info['download_limit'], info['upload_limit'])
-        flash(f'Voucher accepted: {minutes:g} minutes added', 'success')
+        if granted['duration_days']:
+            flash(f"Voucher accepted: {granted['duration_days']:g} day pass, "
+                  f"valid until {granted['expires_at']}", 'success')
+        else:
+            flash(f"Voucher accepted: {granted['minutes']:g} minutes added",
+                  'success')
     return redirect(url_for('portal.index'))
 
 
@@ -205,6 +213,9 @@ def pause():
     mac = _client_mac()
     if not mac:
         flash('Could not identify your device. Reconnect to the WiFi and try again.', 'error')
+        return redirect(url_for('portal.index'))
+    if not svc.user_manager.is_pausable(mac):
+        flash('This pass cannot be paused.', 'error')
         return redirect(url_for('portal.index'))
     svc.user_manager.set_paused(mac, True)
     svc.user_manager.clear_session(mac)      # freeze the deduction clock

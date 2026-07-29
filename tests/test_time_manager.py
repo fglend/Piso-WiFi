@@ -31,6 +31,48 @@ def test_offline_device_keeps_burning_time_when_continuation_on(
     mock_network.set_bandwidth_limit.assert_not_called()
 
 
+def test_duration_pass_is_not_metered_by_elapsed_time(
+        user_manager, mock_network, settings):
+    """A dated pass must not also be charged per connected minute."""
+    tm = make_tm(user_manager, mock_network, settings)
+    code = user_manager.create_voucher(10 * 1440, duration_days=10)
+    user_manager.redeem_voucher(code, MAC)
+    tm._sync_duration_passes(1000.0)
+    before = user_manager.check_balance(MAC)
+
+    user_manager.set_last_deduction(MAC, 1000.0)
+    tm._process_device(MAC, now=1000.0 + 3600)   # an hour connected
+    assert user_manager.check_balance(MAC) == before
+
+
+def test_expired_pass_is_blocked_by_the_meter(user_manager, mock_network, settings):
+    tm = make_tm(user_manager, mock_network, settings)
+    code = user_manager.create_voucher(1440, duration_days=1)
+    user_manager.redeem_voucher(code, MAC)
+    conn = user_manager._connect()
+    try:
+        conn.execute("UPDATE users SET expires_at = datetime('now', '-1 hour')")
+        conn.commit()
+    finally:
+        conn.close()
+
+    tm._sync_duration_passes(1000.0)
+    mock_network.block_mac.assert_called_with(MAC)
+    assert user_manager.check_balance(MAC) == 0
+
+
+def test_duration_sync_is_throttled(user_manager, mock_network, settings):
+    tm = make_tm(user_manager, mock_network, settings)
+    tm.user_manager = MagicMock()
+    tm.user_manager.sync_expiring_devices.return_value = ([], [])
+
+    tm._sync_duration_passes(1000.0)
+    tm._sync_duration_passes(1030.0)
+    assert tm.user_manager.sync_expiring_devices.call_count == 1
+    tm._sync_duration_passes(1000.0 + tm.OFFLINE_SWEEP_SECONDS)
+    assert tm.user_manager.sync_expiring_devices.call_count == 2
+
+
 def test_manual_pause_beats_continuation(user_manager, mock_network, settings):
     """Paused before leaving: the clock must stay frozen while away, even
     though continuation is metering every other absent device."""

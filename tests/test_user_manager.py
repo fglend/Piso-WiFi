@@ -1,3 +1,4 @@
+import datetime as dt
 import os
 import stat
 
@@ -53,6 +54,21 @@ def test_transfer_balance_merges_into_existing_mac(user_manager):
     assert user_manager.check_balance(OTHER_MAC) == 30
     assert user_manager.check_balance(MAC) == 0
     assert user_manager.get_device_info(MAC)['status'] == 'inactive'
+
+
+def test_transfer_carries_the_duration_pass(user_manager):
+    """A monthly customer whose MAC rotated keeps their dated pass, not just
+    loose minutes the elapsed-time meter would drain."""
+    code = user_manager.create_voucher(30 * 1440, duration_days=30,
+                                       pausable=False)
+    user_manager.redeem_voucher(code, MAC)
+    deadline = user_manager.get_expiry(MAC)
+    user_manager.add_time(OTHER_MAC, 1, 5)      # destination already exists
+
+    assert user_manager.transfer_balance(MAC, OTHER_MAC)
+    assert user_manager.get_expiry(OTHER_MAC) == deadline
+    assert user_manager.is_pausable(OTHER_MAC) is False
+    assert user_manager.get_expiry(MAC) is None
 
 
 def test_transfer_balance_without_balance_is_noop(user_manager):
@@ -210,13 +226,102 @@ def test_voucher_lifecycle(user_manager):
     code = user_manager.create_voucher(30)
     assert code
 
-    minutes = user_manager.redeem_voucher(code, MAC)
-    assert minutes == 30
+    granted = user_manager.redeem_voucher(code, MAC)
+    assert granted == {'minutes': 30, 'duration_days': None, 'expires_at': None}
     assert user_manager.check_balance(MAC) == 30
 
     # Second redemption must fail
     assert user_manager.redeem_voucher(code, OTHER_MAC) is None
     assert user_manager.redeem_voucher('BOGUS-CODE', MAC) is None
+
+
+def _hours_until(user_manager, mac):
+    """Hours left on a device's pass, from its stored balance."""
+    return user_manager.check_balance(mac) / 60.0
+
+
+def test_duration_voucher_grants_a_dated_pass(user_manager):
+    code = user_manager.create_voucher(30 * 1440, price=500,
+                                       duration_days=30, pausable=True)
+    granted = user_manager.redeem_voucher(code, MAC)
+
+    assert granted['duration_days'] == 30
+    assert granted['expires_at']                       # a real deadline
+    assert user_manager.get_expiry(MAC) == granted['expires_at']
+    # 30 days of minutes, give or take the second the test took
+    assert 30 * 1440 - 1 <= granted['minutes'] <= 30 * 1440
+    assert user_manager.is_pausable(MAC) is True
+
+
+def test_duration_voucher_can_forbid_pausing(user_manager):
+    code = user_manager.create_voucher(15 * 1440, price=300,
+                                       duration_days=15, pausable=False)
+    user_manager.redeem_voucher(code, MAC)
+    assert user_manager.is_pausable(MAC) is False
+
+
+def test_duration_passes_stack_instead_of_truncating(user_manager):
+    first = user_manager.create_voucher(15 * 1440, duration_days=15)
+    second = user_manager.create_voucher(15 * 1440, duration_days=15)
+    user_manager.redeem_voucher(first, MAC)
+    user_manager.redeem_voucher(second, MAC)
+    # Redeeming a second 15-day pass on top must give 30 days, not reset to 15
+    assert 29.9 < _hours_until(user_manager, MAC) / 24 <= 30
+
+
+def test_pause_pushes_the_deadline_back(user_manager):
+    code = user_manager.create_voucher(10 * 1440, duration_days=10)
+    user_manager.redeem_voucher(code, MAC)
+    before = user_manager.get_expiry(MAC)
+
+    user_manager.set_paused(MAC, True)
+    conn = user_manager._connect()
+    try:  # pretend the customer stayed paused for two hours
+        conn.execute("UPDATE users SET paused_at = datetime('now', '-2 hours')")
+        conn.commit()
+    finally:
+        conn.close()
+    user_manager.set_paused(MAC, False)
+
+    after = user_manager.get_expiry(MAC)
+    assert after > before
+    delta_hours = (
+        (dt.datetime.fromisoformat(after) - dt.datetime.fromisoformat(before))
+        .total_seconds() / 3600.0)
+    assert 1.9 < delta_hours < 2.1
+
+
+def test_expired_pass_reports_zero_and_is_flagged(user_manager):
+    code = user_manager.create_voucher(1440, duration_days=1)
+    user_manager.redeem_voucher(code, MAC)
+    conn = user_manager._connect()
+    try:
+        conn.execute("UPDATE users SET expires_at = datetime('now', '-1 hour')")
+        conn.commit()
+    finally:
+        conn.close()
+
+    tracked, expired = user_manager.sync_expiring_devices()
+    assert MAC in tracked and MAC in expired
+    assert user_manager.check_balance(MAC) == 0
+    assert user_manager.get_device_info(MAC)['status'] == 'inactive'
+
+
+def test_paused_pass_does_not_drain(user_manager):
+    code = user_manager.create_voucher(1440, duration_days=1)
+    user_manager.redeem_voucher(code, MAC)
+    user_manager.set_paused(MAC, True)
+    before = user_manager.check_balance(MAC)
+
+    conn = user_manager._connect()
+    try:
+        conn.execute("UPDATE users SET expires_at = datetime('now', '-1 hour')")
+        conn.commit()
+    finally:
+        conn.close()
+    user_manager.sync_expiring_devices()
+    # Paused rows are skipped by the sync, so the stale balance is untouched
+    assert user_manager.check_balance(MAC) == before
 
 
 def test_voucher_transaction_source(user_manager):
@@ -335,7 +440,8 @@ def test_paid_voucher_records_revenue_at_creation(user_manager):
     assert code is not None
     assert user_manager.get_revenue_summary()['day'] == before + 10
     # Redemption grants the minutes but never double-counts the sale
-    assert user_manager.redeem_voucher(code, "00:11:22:33:44:55") == 150
+    assert user_manager.redeem_voucher(
+        code, "00:11:22:33:44:55")['minutes'] == 150
     assert user_manager.get_revenue_summary()['day'] == before + 10
     voucher = user_manager.get_vouchers(include_redeemed=True)[0]
     assert voucher['price'] == 10

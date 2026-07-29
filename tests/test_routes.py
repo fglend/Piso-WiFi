@@ -127,6 +127,36 @@ def test_settings_toggle_survives_refresh(admin_client, csrf_token, services):
     assert services.settings.pause_on_disconnect is False
 
 
+def test_create_duration_pass_voucher(admin_client, csrf_token, services):
+    resp = post(admin_client, '/vouchers', csrf_token, mode='duration',
+                duration_days=30, duration_price=500, duration_pausable='1')
+    assert resp.status_code == 302
+    voucher = services.user_manager.get_vouchers()[0]
+    assert voucher['duration_days'] == 30
+    assert voucher['pausable'] == 1
+    assert voucher['price'] == 500
+    # Sold up front, so it lands in revenue at creation like other paid codes
+    assert services.user_manager.get_revenue_summary()['day'] == 500
+
+
+def test_create_non_pausable_duration_pass(admin_client, csrf_token, services):
+    post(admin_client, '/vouchers', csrf_token, mode='duration',
+         duration_days=15, duration_price=300)   # checkbox absent = unchecked
+    assert services.user_manager.get_vouchers()[0]['pausable'] == 0
+
+
+def test_non_pausable_pass_hides_button_despite_global_setting(
+        client, csrf_token, services):
+    services.settings.allow_manual_pause = True
+    code = services.user_manager.create_voucher(
+        15 * 1440, duration_days=15, pausable=False)
+    services.user_manager.redeem_voucher(code, MAC)
+
+    assert b'Pause my time' not in client.get('/').data
+    post(client, '/pause', csrf_token)
+    assert services.user_manager.is_paused(MAC) is False
+
+
 def test_pause_button_shown_and_works_when_enabled(client, csrf_token, services):
     services.settings.allow_manual_pause = True
     services.user_manager.add_time(MAC, 5, 25)

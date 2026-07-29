@@ -28,6 +28,10 @@ class TimeManager:
         self.thread = None
         self._next_purge_at = 0.0
         self._next_offline_sweep_at = 0.0
+        self._next_expiry_sync_at = 0.0
+        # MACs on a wall-clock duration pass: their balance is derived from
+        # expires_at, so the elapsed-time meter must not also charge them.
+        self._expiry_macs = frozenset()
         self.logger = logging.getLogger(__name__)
 
     @property
@@ -79,6 +83,7 @@ class TimeManager:
     def _check_and_deduct_time(self):
         try:
             now = time.time()
+            self._sync_duration_passes(now)
             connected_devices = self.network_controller.get_connected_devices()
             connected_macs = set()
 
@@ -124,6 +129,29 @@ class TimeManager:
             self.user_manager.prune_history()
         except Exception as e:
             self.logger.error(f"Error pruning history: {e}")
+
+    def _sync_duration_passes(self, now):
+        """Refresh wall-clock passes and cut off the ones that just ran out.
+
+        A duration pass is not metered by elapsed connect time - its balance
+        is simply the distance to its deadline, recomputed here in one
+        statement for all of them. Runs on a slow cadence: the portal shows
+        this to the minute, so a faster refresh would only cost SD writes.
+        """
+        if now < self._next_expiry_sync_at:
+            return
+        self._next_expiry_sync_at = now + self.OFFLINE_SWEEP_SECONDS
+        try:
+            tracked, expired = self.user_manager.sync_expiring_devices()
+        except Exception as e:
+            self.logger.error(f"Error syncing duration passes: {e}")
+            return
+        self._expiry_macs = frozenset(tracked)
+        for mac in expired:
+            if self.network_controller.is_access_allowed(mac):
+                self.logger.info(f"Duration pass expired for {mac}, blocking...")
+                self.network_controller.block_mac(mac)
+                self.user_manager.clear_session(mac)
 
     def _meter_offline_devices(self, connected_macs, now):
         """Keep charging devices that are not on the network right now.
@@ -177,6 +205,11 @@ class TimeManager:
             if self.network_controller.unblock_mac(mac) and info:
                 self.network_controller.set_bandwidth_limit(
                     mac, info['download_limit'], info['upload_limit'])
+
+        if mac in self._expiry_macs:
+            # Wall-clock pass: the deadline owns the balance. Access has been
+            # repaired above if needed; there is nothing to meter.
+            return
 
         last = self.user_manager.get_last_deduction(mac)
         if last is None:

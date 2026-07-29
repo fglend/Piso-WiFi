@@ -499,6 +499,27 @@ def delete_rate():
 def vouchers():
     svc = _services()
     if request.method == 'POST':
+        if request.form.get('mode') == 'duration':
+            days = _form_number('duration_days', minimum=1, maximum=365,
+                                cast=float)
+            price = _form_number('duration_price', minimum=0, cast=float)
+            if days is None or price is None:
+                flash('Enter a valid number of days (1-365) and a price',
+                      'error')
+                return redirect(url_for('admin.vouchers'))
+            pausable = bool(request.form.get('duration_pausable'))
+            # Minutes mirror the pass so every balance display keeps working;
+            # the deadline stamped at redemption is what actually governs it.
+            code = svc.user_manager.create_voucher(
+                round(days * 1440, 2), price=price,
+                duration_days=days, pausable=pausable)
+            if code:
+                flash(f'{days:g}-day pass created: {code} (₱{price:g}, '
+                      f'{"pausable" if pausable else "not pausable"}). '
+                      f'The {days:g} days start when it is redeemed.', 'success')
+            else:
+                flash('Error creating voucher', 'error')
+            return redirect(url_for('admin.vouchers'))
         if request.form.get('mode') == 'custom':
             price = _form_number('custom_price', minimum=1, cast=float)
             hours = _form_number('custom_hours', minimum=0, cast=float)

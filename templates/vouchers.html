@@ -22,6 +22,7 @@
                     <option value="minutes">Free Voucher</option>
                     <option value="price">Paid Voucher</option>
                     <option value="custom">Custom Voucher &mdash; specific price for specific hours</option>
+                    <option value="duration">Duration Pass &mdash; valid for N days from redemption</option>
                 </select>
             </div>
 
@@ -48,6 +49,34 @@
                 </div>
             </div>
 
+            <div class="voucher-field" data-mode="duration" hidden>
+                <div class="form-row">
+                    <div style="max-width: 200px;">
+                        <label for="voucher-duration-days">Valid for (days)</label>
+                        <input type="number" id="voucher-duration-days" name="duration_days"
+                               min="1" max="365" step="any" placeholder="e.g. 30" disabled>
+                    </div>
+                    <div style="max-width: 200px;">
+                        <label for="voucher-duration-price">Price (₱)</label>
+                        <input type="number" id="voucher-duration-price" name="duration_price"
+                               min="0" step="any" placeholder="e.g. 500" disabled>
+                    </div>
+                </div>
+                <div class="setting-toggle mt-2">
+                    <input type="checkbox" id="voucher-duration-pausable"
+                           name="duration_pausable" value="1" checked disabled>
+                    <div>
+                        <label for="voucher-duration-pausable" class="mb-0">Customer may pause this pass</label>
+                        <div class="muted small mt-2">
+                            Pausing stops their internet and pushes the expiry date
+                            out by however long they stay paused, so they keep the
+                            full span they paid for. Uncheck to sell a pass that
+                            always expires exactly N days after redemption.
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <button type="submit" class="btn btn-primary">Create Voucher</button>
         </form>
         <p class="muted small mb-0 mt-2">Paid and custom vouchers are recorded as revenue
@@ -62,6 +91,7 @@
             <thead>
                 <tr>
                     <th>Code</th>
+                    <th>Type</th>
                     <th>Minutes</th>
                     <th>Price</th>
                     <th>Created</th>
@@ -73,6 +103,16 @@
                 {% for v in vouchers %}
                 <tr>
                     <td><code>{{ v.code }}</code></td>
+                    <td>
+                        {% if v.duration_days %}
+                        <span class="badge badge-info">{{ '%g'|format(v.duration_days) }}-day pass</span>
+                        {% if not v.pausable %}
+                        <span class="badge badge-warn">No pause</span>
+                        {% endif %}
+                        {% else %}
+                        <span class="badge badge-muted">Minutes</span>
+                        {% endif %}
+                    </td>
                     <td>{{ '%g'|format(v.minutes) }}</td>
                     <td>{% if v.price %}₱{{ '%g'|format(v.price) }}{% else %}Free{% endif %}</td>
                     <td>{{ v.created_at }}</td>
@@ -80,7 +120,7 @@
                     <td>{{ v.redeemed_at or '-' }}</td>
                 </tr>
                 {% else %}
-                <tr><td colspan="6" class="text-center muted">No vouchers</td></tr>
+                <tr><td colspan="7" class="text-center muted">No vouchers</td></tr>
                 {% endfor %}
             </tbody>
         </table>
@@ -100,7 +140,9 @@
             // block submit via a stale `required` on a hidden field.
             Array.prototype.slice.call(field.querySelectorAll('input')).forEach(function (input) {
                 input.disabled = !active;
-                input.required = active;
+                // Checkboxes are optional by nature - marking one required
+                // would force the operator to tick it before submitting.
+                input.required = active && input.type !== 'checkbox';
             });
         });
     }
