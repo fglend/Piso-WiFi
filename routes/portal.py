@@ -69,6 +69,7 @@ def index():
         device=device,
         rates=rates,
         posts=posts,
+        sessions=svc.user_manager.get_device_sessions(mac) if mac else [],
         coinslot_enabled=svc.coinslot is not None,
         # A pass sold as non-pausable overrides the shop-wide setting
         pause_enabled=(svc.settings.allow_manual_pause

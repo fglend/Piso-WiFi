@@ -1181,6 +1181,28 @@ class UserManager:
             }
         return out.result
 
+    def get_device_sessions(self, mac_address, limit=10):
+        """Recent connect/disconnect history for one device.
+
+        Backs the portal's Sessions sheet. Ordered newest first; an open
+        session has disconnected_at NULL and renders as 'active'.
+        """
+        with self._with_conn('Listing device sessions',
+                             default=[]) as (conn, out):
+            rows = conn.execute('''
+                SELECT datetime(connected_at, 'localtime') AS connected_at,
+                       CASE WHEN disconnected_at IS NULL THEN NULL
+                            ELSE datetime(disconnected_at, 'localtime')
+                       END AS disconnected_at,
+                       ip_address
+                FROM device_connections
+                WHERE mac_address = ?
+                ORDER BY connected_at DESC
+                LIMIT ?
+            ''', (mac_address, limit)).fetchall()
+            out.result = [dict(row) for row in rows]
+        return out.result
+
     # --- sales reporting ----------------------------------------------------
 
     # Grouping expressions keyed by the report's group_by parameter. Kept as a

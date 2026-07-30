@@ -827,3 +827,352 @@ dl.kv dd { margin: 0; font-weight: 700; font-variant-numeric: tabular-nums; }
   .bar-chart li { grid-template-columns: minmax(60px, auto) 1fr; }
   .bar-value { grid-column: 2; text-align: left; }
 }
+
+/* --- portal app shell ---------------------------------------------------- */
+/* One screen, no page scroll. Secondary content lives in bottom sheets, so
+   the shell only ever holds the status, the clock, and the actions. */
+
+body.portal-app {
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.portal-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  margin: 0 auto;
+  max-width: 520px;
+  padding: 0;
+  width: 100%;
+}
+
+/* Flashes float so a message never pushes the shell out of the viewport. */
+.portal-app .flash {
+  left: 50%;
+  margin: 0;
+  max-width: 480px;
+  position: fixed;
+  top: 0.5rem;
+  transform: translateX(-50%);
+  width: calc(100% - 1.5rem);
+  z-index: 60;
+}
+
+.pa-banner {
+  background: #0b1220;
+  flex: 0 0 auto;
+  height: clamp(120px, 24vh, 210px);
+  overflow: hidden;
+  position: relative;
+}
+
+.pa-banner .carousel-slides,
+.pa-banner .carousel-slide { height: 100%; }
+
+.pa-banner img {
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+
+.pa-banner.is-plain {
+  align-items: center;
+  background: linear-gradient(135deg, var(--accent-strong), var(--accent));
+  display: flex;
+  justify-content: center;
+  text-align: center;
+}
+
+.pa-banner-copy {
+  bottom: 0;
+  color: #fff;
+  left: 0;
+  padding: 1rem;
+  position: absolute;
+  right: 0;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.75);
+}
+
+.pa-banner.is-plain .pa-banner-copy { position: static; }
+
+.pa-banner-copy h2 {
+  font-size: clamp(1.15rem, 5vw, 1.6rem);
+  letter-spacing: 0.02em;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.pa-banner-copy p { margin: 0.25rem 0 0; opacity: 0.85; }
+
+.pa-banner-dots {
+  bottom: 0.5rem;
+  display: flex;
+  gap: 0.3rem;
+  justify-content: center;
+  left: 0;
+  position: absolute;
+  right: 0;
+}
+
+/* The shell body is the flex child that absorbs leftover height. overflow-y
+   is a safety valve: on a very short viewport the content scrolls here rather
+   than being clipped, which would hide the voucher field entirely. */
+.pa-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: clamp(0.4rem, 1.4vh, 0.75rem);
+  min-height: 0;
+  overflow-y: auto;
+  padding: clamp(0.6rem, 2vh, 1rem) 0.9rem;
+}
+
+.pa-status { text-align: center; }
+
+.pa-pill {
+  align-items: center;
+  border-radius: 999px;
+  display: inline-flex;
+  font-weight: 700;
+  gap: 0.45rem;
+  padding: 0.45rem 1.1rem;
+}
+
+.pa-pill-dot {
+  border-radius: 50%;
+  height: 9px;
+  width: 9px;
+}
+
+.pa-pill.is-ok { background: var(--ok-soft); color: var(--ok); }
+.pa-pill.is-ok .pa-pill-dot { background: var(--ok); }
+.pa-pill.is-warn { background: var(--warn-soft); color: var(--warn); }
+.pa-pill.is-warn .pa-pill-dot { background: var(--warn); }
+.pa-pill.is-danger { background: var(--danger-soft); color: var(--danger); }
+.pa-pill.is-danger .pa-pill-dot { background: var(--danger); }
+
+.pa-clock {
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: clamp(0.6rem, 2vh, 1rem);
+  text-align: center;
+}
+
+.pa-clock-label {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.pa-clock-value {
+  align-items: baseline;
+  color: var(--accent);
+  display: flex;
+  gap: 0.35rem;
+  justify-content: center;
+  line-height: 1;
+  margin-top: 0.3rem;
+}
+
+.pa-clock-value > span {
+  font-size: clamp(2rem, 11vw, 3.2rem);
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+}
+
+.pa-clock-value small { color: var(--muted); font-size: 0.9rem; font-weight: 700; }
+
+.pa-tiles {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.pa-tile {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.5rem;
+  text-align: center;
+}
+
+.pa-tile-label {
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.pa-tile-value { font-size: 1rem; font-weight: 700; margin-top: 0.15rem; }
+.pa-tile-value.is-small { font-size: 0.75rem; }
+
+.pa-chips {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: 1fr 1fr;
+}
+
+.pa-chip {
+  align-items: center;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  justify-content: space-between;
+  padding: 0.55rem 0.9rem;
+}
+
+.pa-chip-caret { color: var(--muted); }
+
+.pa-primary-form { margin: 0; }
+
+.pa-primary {
+  background: var(--ok);
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 1.05rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  padding: clamp(0.7rem, 2.2vh, 1rem);
+  width: 100%;
+}
+
+.pa-primary:disabled { cursor: not-allowed; opacity: 0.55; }
+
+.pa-actions {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: 1fr 1fr;
+}
+
+.pa-action-form { display: contents; margin: 0; }
+
+.pa-action {
+  background: var(--accent);
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 700;
+  padding: 0.7rem 0.5rem;
+  width: 100%;
+}
+
+.pa-action.is-accent { background: var(--warn); }
+
+.pa-voucher {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0;
+}
+
+.pa-voucher input { flex: 1 1 auto; margin: 0; }
+
+.pa-voucher-send {
+  background: var(--accent);
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: #fff;
+  cursor: pointer;
+  font-size: 1.1rem;
+  padding: 0 1rem;
+}
+
+.portal-app .portal-footer {
+  border-top: 1px solid var(--border);
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+  margin: 0;
+  padding: 0.5rem;
+  text-align: center;
+}
+
+/* --- bottom sheets ------------------------------------------------------- */
+
+.pa-sheet {
+  inset: 0;
+  position: fixed;
+  z-index: 90;
+}
+
+.pa-sheet[hidden] { display: none; }
+
+.pa-sheet-backdrop {
+  background: rgba(0, 0, 0, 0.55);
+  inset: 0;
+  position: absolute;
+}
+
+.pa-sheet-card {
+  background: var(--surface);
+  border-radius: var(--radius) var(--radius) 0 0;
+  bottom: 0;
+  left: 50%;
+  max-height: 80dvh;
+  max-width: 520px;
+  overflow-y: auto;
+  padding: 1rem 1.1rem 1.4rem;
+  position: absolute;
+  transform: translateX(-50%);
+  width: 100%;
+}
+
+.pa-sheet-head {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
+.pa-sheet-head h2 { font-size: 1.05rem; margin: 0; }
+
+.pa-sheet-close {
+  background: none;
+  border: 0;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 1.6rem;
+  line-height: 1;
+  padding: 0 0.25rem;
+}
+
+.pa-list {
+  display: grid;
+  gap: 0.5rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.pa-list li {
+  align-items: center;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+  padding: 0.55rem 0.7rem;
+}
+
+.steps-compact {
+  gap: 0.35rem;
+  margin-top: 1rem;
+}
+
+.steps-compact .step { padding: 0.45rem; }
+.steps-compact .step h3 { font-size: 0.72rem; margin: 0.2rem 0 0; }

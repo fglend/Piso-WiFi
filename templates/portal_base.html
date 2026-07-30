@@ -7,8 +7,8 @@
     <link rel="stylesheet" href="{{ static_url('app.css') }}">
     {% include "_theme.html" %}
 </head>
-<body>
-    <main class="container container-narrow">
+<body class="{% block body_class %}{% endblock %}">
+    <main class="{% block main_class %}container container-narrow{% endblock %}">
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% for category, message in messages %}
                 <div class="flash flash-{{ category }}" role="alert">{{ message }}</div>

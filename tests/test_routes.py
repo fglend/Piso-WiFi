@@ -699,3 +699,95 @@ def test_settings_page_exposes_branding_controls(admin_client):
     assert b'Branding' in resp.data
     assert b'name="theme_accent"' in resp.data
     assert b'multipart/form-data' in resp.data
+
+
+# --- portal app shell --------------------------------------------------------
+
+def test_portal_is_a_single_screen_shell(client):
+    body = client.get('/').data
+
+    assert b'class="portal-app"' in body
+    assert b'class="portal-shell"' in body
+    # Secondary content moved into sheets so the shell itself never scrolls.
+    assert b'id="sheet-rates"' in body
+    assert b'id="sheet-sessions"' in body
+    assert b'id="sheet-device"' in body
+
+
+def test_portal_shows_disconnected_pill_with_no_balance(client):
+    body = client.get('/').data
+
+    assert b'Disconnected' in body
+    assert b'Connected' not in body.replace(b'Disconnected', b'')
+
+
+def test_portal_shows_connected_pill_with_balance(client, services):
+    services.user_manager.add_time(MAC, 5, 25)
+
+    body = client.get('/').data
+
+    assert b'>Connected' in body
+    assert b'Time Remaining' in body
+
+
+def test_portal_sessions_sheet_lists_history(client, services):
+    services.user_manager.sync_connection_snapshot(
+        [{'mac_address': MAC, 'ip': '192.168.4.7', 'hostname': 'phone'}])
+
+    body = client.get('/').data
+
+    assert b'Recent Sessions' in body
+    assert b'192.168.4.7' in body
+
+
+def test_portal_sessions_sheet_handles_no_history(client):
+    assert b'No past sessions recorded' in client.get('/').data
+
+
+# --- coin slot markup (fixtures default to coinslot=None, so force it on) ----
+
+def _with_coinslot(services):
+    from unittest.mock import MagicMock
+    services.coinslot = MagicMock()
+    return services
+
+
+def test_coin_modal_survives_with_every_id_the_poller_binds(client, services):
+    _with_coinslot(services)
+
+    body = client.get('/').data.decode()
+
+    # The coin poller resolves each of these by id and writes to it without a
+    # null check; a restructure that drops one breaks the whole session view.
+    for element_id in (
+        'coin-modal', 'coin-modal-title', 'coin-modal-detail',
+        'coin-modal-seconds', 'coin-modal-pesos', 'coin-modal-minutes',
+        'coin-modal-alert', 'coin-modal-close',
+        'claim-coin-button', 'coin-session-title', 'coin-session-detail',
+        'coin-session-badge', 'coin-seconds-left', 'coin-pesos-inserted',
+        'coin-minutes-added', 'coin-countdown-bar', 'coin-detected-alert',
+        'balance-minutes',
+    ):
+        assert f'id="{element_id}"' in body, f'missing #{element_id}'
+
+    # setStep() walks these; all five must still exist.
+    for step in range(1, 6):
+        assert f'data-step="{step}"' in body
+
+
+def test_coin_form_actions_are_unchanged(client, services):
+    _with_coinslot(services)
+
+    body = client.get('/').data
+
+    assert b'action="/insert_coin"' in body
+    assert b'action="/coin_done"' in body
+    assert b'>Insert Coin<' in body
+
+
+def test_portal_forms_keep_their_contracts(client):
+    body = client.get('/').data
+
+    assert b'action="/redeem"' in body
+    assert b'name="code"' in body
+    assert b'name="csrf_token"' in body

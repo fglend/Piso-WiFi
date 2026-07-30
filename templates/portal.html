@@ -2,16 +2,23 @@
 
 {% block title %}{{ portal_title }}{% endblock %}
 
+{# Full-viewport app shell: the whole portal is one screen. Anything that
+   would have made the page scroll (rates, session history, device detail,
+   the coin-slot walkthrough) lives in a bottom sheet instead of inline. #}
+{% block body_class %}portal-app{% endblock %}
+{% block main_class %}portal-shell{% endblock %}
+
 {% block content %}
-{% if posts %}
-<section class="portal-carousel" data-carousel aria-label="Announcements">
+{% if device %}
+<header class="pa-banner{% if not posts %} is-plain{% endif %}" data-carousel
+        aria-label="Announcements">
+    {% if posts %}
     <div class="carousel-slides" aria-live="off">
         {% for post in posts %}
         <article class="carousel-slide" data-carousel-slide {% if not loop.first %}hidden{% endif %}>
             <img src="{{ url_for('static', filename='uploads/' ~ post.image_file) }}"
                  alt="{{ post.title }}">
-            <div class="carousel-copy">
-                <div class="metric-label">Announcement</div>
+            <div class="pa-banner-copy">
                 <h2>{{ post.title }}</h2>
                 {% if post.description %}
                 <div class="carousel-description">{{ post.description_html }}</div>
@@ -21,231 +28,275 @@
         {% endfor %}
     </div>
     {% if posts|length > 1 %}
-    <div class="carousel-controls">
-        <button type="button" class="carousel-arrow" data-carousel-previous
-                aria-label="Previous announcement">&lsaquo;</button>
-        <div class="carousel-dots" data-carousel-dots>
-            {% for post in posts %}
-            <button type="button"
-                    class="carousel-dot{% if loop.first %} active{% endif %}"
-                    data-carousel-dot="{{ loop.index0 }}"
-                    aria-label="Go to announcement {{ loop.index }}"></button>
-            {% endfor %}
-        </div>
-        <button type="button" class="carousel-arrow" data-carousel-next
-                aria-label="Next announcement">&rsaquo;</button>
-        <span class="visually-hidden" aria-live="polite" data-carousel-position>1 / {{ posts|length }}</span>
-        <button type="button" class="btn btn-ghost btn-sm carousel-toggle"
-                data-carousel-toggle aria-pressed="false">Pause</button>
+    <div class="pa-banner-dots" data-carousel-dots>
+        {% for post in posts %}
+        <button type="button" class="carousel-dot{% if loop.first %} active{% endif %}"
+                data-carousel-dot="{{ loop.index0 }}"
+                aria-label="Go to announcement {{ loop.index }}"></button>
+        {% endfor %}
+    </div>
+    <button type="button" class="visually-hidden" data-carousel-previous>Previous</button>
+    <button type="button" class="visually-hidden" data-carousel-next>Next</button>
+    <span class="visually-hidden" aria-live="polite" data-carousel-position>1 / {{ posts|length }}</span>
+    <button type="button" class="visually-hidden" data-carousel-toggle aria-pressed="false">Pause</button>
+    {% endif %}
+    {% else %}
+    <div class="pa-banner-copy">
+        <h2>{{ portal_title }}</h2>
+        <p>{{ portal_subtitle }}</p>
     </div>
     {% endif %}
-</section>
-{% endif %}
+</header>
 
-{% if device %}
-    {# Hero status card: the one thing a customer opens the portal to see.
-       The countdown ticks client-side from the server-rendered balance so the
-       number feels live without polling the Pi once a second per phone. #}
-    <section class="hero-status{% if device.paused %} is-paused{% elif device.time_balance <= 0 %} is-empty{% endif %}"
-             aria-labelledby="hero-title">
-        <div class="hero-top">
-            <div>
-                <div class="metric-label">{{ portal_title }}</div>
-                <h1 class="hero-heading" id="hero-title">
-                    {% if device.paused %}Time paused
-                    {% elif device.time_balance <= 0 %}No time left
-                    {% else %}You're online{% endif %}
-                </h1>
-            </div>
-            {% if device.paused %}
-                <span class="badge badge-warn">Paused</span>
-            {% elif device.time_balance <= 0 %}
-                <span class="badge badge-danger">No access</span>
-            {% else %}
-                <span class="badge badge-ok">Active</span>
-            {% endif %}
-        </div>
+<div class="pa-body">
+    <div class="pa-status">
+        {% if device.paused %}
+        <span class="pa-pill is-warn"><span class="pa-pill-dot"></span>Paused</span>
+        {% elif device.time_balance <= 0 %}
+        <span class="pa-pill is-danger"><span class="pa-pill-dot"></span>Disconnected</span>
+        {% else %}
+        <span class="pa-pill is-ok"><span class="pa-pill-dot"></span>Connected</span>
+        {% endif %}
+    </div>
 
-        <div class="hero-clock" aria-live="polite">
+    <section class="pa-clock" aria-label="Time remaining">
+        <div class="pa-clock-label">Time Remaining</div>
+        <div class="pa-clock-value">
             <span id="balance-minutes"
                   data-live-countdown="{{ '%.4f'|format(device.time_balance) }}"
                   data-countdown-running="{{ '0' if device.paused or device.time_balance <= 0 else '1' }}"
-                  >{{ '%.1f'|format(device.time_balance) }}</span>
-            <span class="hero-clock-unit">min left</span>
-        </div>
-        {% if device.expires_at %}
-        <div class="hero-note">Pass valid until {{ device.expires_at }}</div>
-        {% elif device.time_balance <= 0 %}
-        <div class="hero-note">Insert a coin or redeem a voucher below to get online.</div>
-        {% endif %}
-
-        <dl class="hero-facts">
-            <div>
-                <dt>Plan</dt>
-                <dd>{% if device.plan == 'premium' %}Premium{% else %}Default{% endif %}</dd>
-            </div>
-            <div>
-                <dt>Speed</dt>
-                <dd>{{ '%g'|format(device.download_limit / 1000) }} / {{ '%g'|format(device.upload_limit / 1000) }} Mbps</dd>
-            </div>
-            <div>
-                <dt>Device</dt>
-                <dd class="text-break">{{ device.mac_address }}</dd>
-            </div>
-        </dl>
-    </section>
-
-    {# Resume always renders when paused, even after the operator turns pausing
-       off, so nobody is ever stranded with a frozen balance and no internet. #}
-    {% if device.paused %}
-    <div class="pause-panel is-paused">
-        <div class="pause-panel-text">
-            <div class="pause-panel-title">
-                <span class="pause-dot" aria-hidden="true"></span>
-                Your time is paused
-            </div>
-            <p class="pause-panel-note">
-                The countdown is stopped and your internet is off. Your
-                {{ '%.1f'|format(device.time_balance) }} minute(s) stay saved
-                until you resume.
-            </p>
-        </div>
-        <form action="{{ url_for('portal.resume') }}" method="POST">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <button type="submit" class="btn btn-primary">Resume my time</button>
-        </form>
-    </div>
-    {% elif pause_enabled and device.time_balance > 0 %}
-    <div class="pause-panel">
-        <div class="pause-panel-text">
-            <div class="pause-panel-title">
-                <span class="pause-dot" aria-hidden="true"></span>
-                Your time is running
-            </div>
-            <p class="pause-panel-note">
-                Stepping away? Pausing stops the countdown and your internet so
-                you keep your remaining minutes for later.
-            </p>
-        </div>
-        <form action="{{ url_for('portal.pause') }}" method="POST">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <button type="submit" class="btn btn-ghost">Pause my time</button>
-        </form>
-    </div>
-    {% endif %}
-
-    <section class="card mb-4" aria-labelledby="price-title">
-        <div class="card-head">
-            <h2 class="mb-0" id="price-title">Price List</h2>
-            {% if not rates %}
-            <span class="badge badge-muted">{{ '%g'|format(coin_minutes_per_peso) }} min per ₱1</span>
-            {% endif %}
-        </div>
-        <div class="card-body">
-            {% if rates %}
-            <ul class="price-list">
-                {% for rate in rates %}
-                <li>
-                    <span class="price-amount">₱{{ rate.pesos }}</span>
-                    <span class="price-label">{{ rate.label }}</span>
-                </li>
-                {% endfor %}
-            </ul>
-            {% else %}
-            <p class="muted mb-0">
-                Every ₱1 buys {{ '%g'|format(coin_minutes_per_peso) }} minute(s).
-            </p>
-            {% endif %}
+                  >{% if device.time_balance > 0 %}{{ '%.1f'|format(device.time_balance) }}{% else %}--{% endif %}</span>
+            {% if device.time_balance > 0 %}<small>min</small>{% endif %}
         </div>
     </section>
 
-    <div class="flash flash-info" role="note">
-        <strong>Keep your remaining time.</strong>
-        Your minutes are saved to this device's Wi-Fi address. Please do not
-        tap <em>Forget This Network</em> — you would come back as a new device
-        with zero balance.
-        <span class="muted small">
-            iPhone users: Settings &rarr; Wi-Fi &rarr; (i) beside this network
-            &rarr; set <em>Private Wi-Fi Address</em> to <em>Fixed</em>.
-            Lost your time after switching? Ask the operator to transfer it.
-        </span>
+    <div class="pa-tiles">
+        <div class="pa-tile">
+            <div class="pa-tile-label">Plan</div>
+            <div class="pa-tile-value">{% if device.plan == 'premium' %}Premium{% else %}Default{% endif %}</div>
+        </div>
+        <div class="pa-tile">
+            <div class="pa-tile-label">Speed</div>
+            <div class="pa-tile-value is-small">{{ '%g'|format(device.download_limit / 1000) }} / {{ '%g'|format(device.upload_limit / 1000) }} Mbps</div>
+        </div>
+        <div class="pa-tile">
+            <div class="pa-tile-label">Expiry</div>
+            <div class="pa-tile-value is-small">{% if device.expires_at %}{{ device.expires_at.split(' ')[0] }}{% else %}--{% endif %}</div>
+        </div>
+    </div>
+
+    <div class="pa-chips">
+        <button type="button" class="pa-chip" data-sheet="sheet-device">
+            <span>Device</span><span class="pa-chip-caret">&rsaquo;</span>
+        </button>
+        <button type="button" class="pa-chip" data-sheet="sheet-help">
+            <span>Keep my time</span><span class="pa-chip-caret">&rsaquo;</span>
+        </button>
     </div>
 
     {% if coinslot_enabled %}
-    <section class="card" id="coin-panel" aria-labelledby="coin-panel-title">
-        <div class="card-head">
-            <div>
-                <h2 class="mb-0" id="coin-panel-title">Buy Time With Coins</h2>
-                <div class="muted small">{{ portal_subtitle }}</div>
-            </div>
-            <form action="{{ url_for('portal.insert_coin') }}" method="POST" class="mb-0">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <button type="submit" class="btn btn-primary btn-lg" id="claim-coin-button">
-                    Start coin session
-                </button>
-            </form>
+    <form action="{{ url_for('portal.insert_coin') }}" method="POST" class="pa-primary-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="pa-primary" id="claim-coin-button">Insert Coin</button>
+    </form>
+    {% endif %}
+
+    <div class="pa-actions">
+        <button type="button" class="pa-action" data-sheet="sheet-rates">WiFi Rates</button>
+        <button type="button" class="pa-action" data-sheet="sheet-sessions">Sessions</button>
+        {% if coinslot_enabled %}
+        <button type="button" class="pa-action" data-sheet="sheet-coin">Coin Slot</button>
+        {% else %}
+        <button type="button" class="pa-action" data-sheet="sheet-help">Help</button>
+        {% endif %}
+        {% if device.paused %}
+        <form action="{{ url_for('portal.resume') }}" method="POST" class="pa-action-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="pa-action is-accent">Resume my time</button>
+        </form>
+        {% elif pause_enabled and device.time_balance > 0 %}
+        <form action="{{ url_for('portal.pause') }}" method="POST" class="pa-action-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="pa-action">Pause my time</button>
+        </form>
+        {% else %}
+        <button type="button" class="pa-action" data-sheet="sheet-plan">My Plan</button>
+        {% endif %}
+    </div>
+
+    <form action="{{ url_for('portal.redeem') }}" method="POST" class="pa-voucher">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="text" name="code" id="voucher-code" placeholder="Enter voucher code"
+               aria-label="Voucher code" autocomplete="off" required>
+        <button type="submit" class="pa-voucher-send" aria-label="Redeem voucher">&#10148;</button>
+    </form>
+</div>
+
+{# ---------------- bottom sheets ---------------- #}
+
+<div class="pa-sheet" id="sheet-rates" hidden role="dialog" aria-modal="true"
+     aria-labelledby="sheet-rates-title">
+    <div class="pa-sheet-backdrop" data-sheet-close></div>
+    <div class="pa-sheet-card">
+        <div class="pa-sheet-head">
+            <h2 id="sheet-rates-title">WiFi Rates</h2>
+            <button type="button" class="pa-sheet-close" data-sheet-close aria-label="Close">&times;</button>
         </div>
+        {% if rates %}
+        <ul class="price-list">
+            {% for rate in rates %}
+            <li>
+                <span class="price-amount">&#8369;{{ rate.pesos }}</span>
+                <span class="price-label">{{ rate.label }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p class="muted mb-0">Every &#8369;1 buys {{ '%g'|format(coin_minutes_per_peso) }} minute(s).</p>
+        {% endif %}
+    </div>
+</div>
 
-        <div class="card-body">
-            <div class="steps mb-4" id="coin-steps">
-                <div class="step is-done" data-step="1">
-                    <div class="step-num">1</div>
-                    <h3>Connect</h3>
-                    <p class="small muted">Join the WiFi and open this portal.</p>
-                </div>
-                <div class="step" data-step="2">
-                    <div class="step-num">2</div>
-                    <h3>Claim</h3>
-                    <p class="small muted">Tap start so coins credit this device only.</p>
-                </div>
-                <div class="step" data-step="3">
-                    <div class="step-num">3</div>
-                    <h3>Insert</h3>
-                    <p class="small muted">Drop coins while the countdown runs.</p>
-                </div>
-                <div class="step" data-step="4">
-                    <div class="step-num">4</div>
-                    <h3>Confirm</h3>
-                    <p class="small muted">Watch your minutes update instantly.</p>
-                </div>
-                <div class="step" data-step="5">
-                    <div class="step-num">5</div>
-                    <h3>Browse</h3>
-                    <p class="small muted">Enjoy the internet with your balance.</p>
-                </div>
-            </div>
-
-            <div class="grid grid-2">
-                <div class="stack" aria-live="polite">
-                    <div class="row-between">
-                        <div>
-                            <div class="metric-label">Coin slot status</div>
-                            <h3 class="mb-0" id="coin-session-title">Ready for your session</h3>
-                            <p class="muted small mb-0" id="coin-session-detail">
-                                Tap start when you are beside the coin slot.
-                            </p>
-                        </div>
-                        <span class="badge text-bg-secondary" id="coin-session-badge">Available</span>
-                    </div>
-                    <div class="progress" role="progressbar" aria-label="Coin session countdown">
-                        <div class="progress-bar" id="coin-countdown-bar" style="width: 0%">0s</div>
-                    </div>
-                    <div class="flash flash-success mb-0 d-none" id="coin-detected-alert">
-                        Coin detected. Your minutes were added.
-                    </div>
-                </div>
-
+<div class="pa-sheet" id="sheet-sessions" hidden role="dialog" aria-modal="true"
+     aria-labelledby="sheet-sessions-title">
+    <div class="pa-sheet-backdrop" data-sheet-close></div>
+    <div class="pa-sheet-card">
+        <div class="pa-sheet-head">
+            <h2 id="sheet-sessions-title">Recent Sessions</h2>
+            <button type="button" class="pa-sheet-close" data-sheet-close aria-label="Close">&times;</button>
+        </div>
+        {% if sessions %}
+        <ul class="pa-list">
+            {% for entry in sessions %}
+            <li>
                 <div>
-                    <div class="metric-label">Current session</div>
-                    <dl class="kv">
-                        <div><dt>Seconds left</dt><dd id="coin-seconds-left">0</dd></div>
-                        <div><dt>Pesos inserted</dt><dd id="coin-pesos-inserted">₱0</dd></div>
-                        <div><dt>Minutes added</dt><dd id="coin-minutes-added">0</dd></div>
-                    </dl>
+                    <strong>{{ entry.connected_at }}</strong>
+                    <div class="muted small">
+                        {% if entry.disconnected_at %}until {{ entry.disconnected_at }}{% else %}still connected{% endif %}
+                    </div>
                 </div>
-            </div>
+                <span class="muted small">{{ entry.ip_address or '' }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p class="muted mb-0">No past sessions recorded for this device yet.</p>
+        {% endif %}
+    </div>
+</div>
+
+<div class="pa-sheet" id="sheet-device" hidden role="dialog" aria-modal="true"
+     aria-labelledby="sheet-device-title">
+    <div class="pa-sheet-backdrop" data-sheet-close></div>
+    <div class="pa-sheet-card">
+        <div class="pa-sheet-head">
+            <h2 id="sheet-device-title">This Device</h2>
+            <button type="button" class="pa-sheet-close" data-sheet-close aria-label="Close">&times;</button>
         </div>
-    </section>
+        <dl class="kv">
+            <div><dt>Wi-Fi address</dt><dd class="text-break">{{ device.mac_address }}</dd></div>
+            {% if device.ip %}<div><dt>IP address</dt><dd>{{ device.ip }}</dd></div>{% endif %}
+            {% if device.hostname %}<div><dt>Name</dt><dd>{{ device.hostname }}</dd></div>{% endif %}
+            <div><dt>Plan</dt><dd>{% if device.plan == 'premium' %}Premium{% else %}Default{% endif %}</dd></div>
+            <div><dt>Speed limit</dt><dd>{{ device.download_limit }} kbps / {{ device.upload_limit }} kbps</dd></div>
+            {% if device.expires_at %}<div><dt>Pass valid until</dt><dd>{{ device.expires_at }}</dd></div>{% endif %}
+        </dl>
+    </div>
+</div>
+
+<div class="pa-sheet" id="sheet-plan" hidden role="dialog" aria-modal="true"
+     aria-labelledby="sheet-plan-title">
+    <div class="pa-sheet-backdrop" data-sheet-close></div>
+    <div class="pa-sheet-card">
+        <div class="pa-sheet-head">
+            <h2 id="sheet-plan-title">My Plan</h2>
+            <button type="button" class="pa-sheet-close" data-sheet-close aria-label="Close">&times;</button>
+        </div>
+        <p class="muted">
+            You are on the
+            {% if device.plan == 'premium' %}Premium{% else %}Default{% endif %}
+            plan at {{ '%g'|format(device.download_limit / 1000) }} Mbps down.
+        </p>
+        {% if device.plan == 'default' and not device.upgrade_requested %}
+        <form action="{{ url_for('portal.request_upgrade') }}" method="POST" class="mb-0">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="btn btn-primary">Request Premium Upgrade</button>
+        </form>
+        {% elif device.upgrade_requested %}
+        <span class="badge badge-warn">Premium upgrade requested</span>
+        {% else %}
+        <span class="badge badge-ok">Premium active</span>
+        {% endif %}
+    </div>
+</div>
+
+<div class="pa-sheet" id="sheet-help" hidden role="dialog" aria-modal="true"
+     aria-labelledby="sheet-help-title">
+    <div class="pa-sheet-backdrop" data-sheet-close></div>
+    <div class="pa-sheet-card">
+        <div class="pa-sheet-head">
+            <h2 id="sheet-help-title">Keep Your Remaining Time</h2>
+            <button type="button" class="pa-sheet-close" data-sheet-close aria-label="Close">&times;</button>
+        </div>
+        <p>
+            Your minutes are saved to this device&rsquo;s Wi-Fi address. Please do
+            not tap <em>Forget This Network</em> &mdash; you would come back as a
+            new device with zero balance.
+        </p>
+        <p class="muted small mb-0">
+            iPhone users: Settings &rarr; Wi-Fi &rarr; (i) beside this network
+            &rarr; set <em>Private Wi-Fi Address</em> to <em>Fixed</em>.
+            Lost your time after switching? Ask the operator to transfer it.
+        </p>
+    </div>
+</div>
+
+{% if coinslot_enabled %}
+{# The coin walkthrough and the shared slot status. The live view during a
+   session is the modal below; this sheet is the "what is going on" reference. #}
+<div class="pa-sheet" id="sheet-coin" hidden role="dialog" aria-modal="true"
+     aria-labelledby="coin-panel-title">
+    <div class="pa-sheet-backdrop" data-sheet-close></div>
+    <div class="pa-sheet-card">
+        <div class="pa-sheet-head">
+            <h2 id="coin-panel-title">Coin Slot</h2>
+            <button type="button" class="pa-sheet-close" data-sheet-close aria-label="Close">&times;</button>
+        </div>
+        <div class="muted small mb-3">{{ portal_subtitle }}</div>
+
+        <div class="row-between">
+            <div>
+                <div class="metric-label">Status</div>
+                <h3 class="mb-0" id="coin-session-title">Ready for your session</h3>
+                <p class="muted small mb-0" id="coin-session-detail">
+                    Tap Insert Coin when you are beside the coin slot.
+                </p>
+            </div>
+            <span class="badge text-bg-secondary" id="coin-session-badge">Available</span>
+        </div>
+
+        <div class="progress mt-3" role="progressbar" aria-label="Coin session countdown">
+            <div class="progress-bar" id="coin-countdown-bar" style="width: 0%">0s</div>
+        </div>
+        <div class="flash flash-success mb-0 d-none" id="coin-detected-alert">
+            Coin detected. Your minutes were added.
+        </div>
+
+        <dl class="kv mt-3">
+            <div><dt>Seconds left</dt><dd id="coin-seconds-left">0</dd></div>
+            <div><dt>Pesos inserted</dt><dd id="coin-pesos-inserted">&#8369;0</dd></div>
+            <div><dt>Minutes added</dt><dd id="coin-minutes-added">0</dd></div>
+        </dl>
+
+        <div class="steps steps-compact">
+            <div class="step is-done" data-step="1"><div class="step-num">1</div><h3>Connect</h3></div>
+            <div class="step" data-step="2"><div class="step-num">2</div><h3>Claim</h3></div>
+            <div class="step" data-step="3"><div class="step-num">3</div><h3>Insert</h3></div>
+            <div class="step" data-step="4"><div class="step-num">4</div><h3>Confirm</h3></div>
+            <div class="step" data-step="5"><div class="step-num">5</div><h3>Browse</h3></div>
+        </div>
+    </div>
+</div>
 
     <div class="coin-modal" id="coin-modal" hidden role="dialog" aria-modal="true"
          aria-labelledby="coin-modal-title">
@@ -306,105 +357,78 @@
         @keyframes coinPulse { 0% { transform: scale(1); }
             45% { transform: scale(1.18); } 100% { transform: scale(1); } }
     </style>
-    {% endif %}
 
-    <div class="grid grid-2">
-        <div class="card mb-0">
-            <div class="card-body">
-                <h2>Redeem a Voucher</h2>
-                <form action="{{ url_for('portal.redeem') }}" method="POST" class="form-row">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                    <input type="text" name="code" placeholder="XXXX-XXXX" aria-label="Voucher code" required>
-                    <button type="submit" class="btn btn-primary">Redeem</button>
-                </form>
-            </div>
-        </div>
-        <div class="card mb-0">
-            <div class="card-body">
-                <h2>Plan Upgrade</h2>
-                {% if device.plan == 'default' and not device.upgrade_requested %}
-                <form action="{{ url_for('portal.request_upgrade') }}" method="POST">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                    <button type="submit" class="btn btn-ghost">Request Premium Upgrade</button>
-                </form>
-                {% elif device.upgrade_requested %}
-                    <span class="badge badge-warn">Premium upgrade requested</span>
-                {% else %}
-                    <span class="badge badge-ok">Premium active</span>
-                {% endif %}
-            </div>
-        </div>
-    </div>
+{% endif %}
+
 {% else %}
-    <div class="portal-header">
-        <div>
-            <h1 class="mb-0">Connect to PISO WIFI</h1>
-            <p class="muted mb-0">This portal needs to identify your device before accepting payment.</p>
+<header class="pa-banner is-plain">
+    <div class="pa-banner-copy">
+        <h2>Connect to {{ portal_title }}</h2>
+        <p>This portal needs to identify your device before accepting payment.</p>
+    </div>
+</header>
+<div class="pa-body">
+    <div class="steps">
+        <div class="step is-active">
+            <div class="step-num">1</div>
+            <h2>Join the AP</h2>
+            <p class="small muted">Connect your phone to the PISO WIFI network.</p>
+        </div>
+        <div class="step">
+            <div class="step-num">2</div>
+            <h2>Open portal</h2>
+            <p class="small muted">Refresh this page after joining the access point.</p>
+        </div>
+        <div class="step">
+            <div class="step-num">3</div>
+            <h2>Start payment</h2>
+            <p class="small muted">The coin button appears after your device is detected.</p>
         </div>
     </div>
-    <div class="card">
-        <div class="card-body">
-            <div class="steps">
-                <div class="step is-active">
-                    <div class="step-num">1</div>
-                    <h2>Join the AP</h2>
-                    <p class="small muted">Connect your phone to the PISO WIFI network.</p>
-                </div>
-                <div class="step">
-                    <div class="step-num">2</div>
-                    <h2>Open portal</h2>
-                    <p class="small muted">Refresh this page after joining the access point.</p>
-                </div>
-                <div class="step">
-                    <div class="step-num">3</div>
-                    <h2>Start payment</h2>
-                    <p class="small muted">The coin button appears after your device is detected.</p>
-                </div>
-            </div>
-        </div>
-    </div>
+</div>
 {% endif %}
 
 {% if device %}
 <script>
-// Cosmetic countdown. The server is authoritative and deducts on its own
-// interval; this only stops the number looking frozen between reloads, and
-// reloads once it reaches zero so the real state takes over.
+// Bottom sheets. Everything that would make the shell scroll lives in one of
+// these; only one is ever open, and Escape / backdrop / close all dismiss.
 (function () {
-    var element = document.getElementById('balance-minutes');
-    if (!element || !element.dataset.liveCountdown) return;
-    var minutes = parseFloat(element.dataset.liveCountdown) || 0;
-    var running = element.dataset.countdownRunning === '1';
-    var startedAt = Date.now();
-    var reloading = false;
+    var openSheet = null;
 
-    function render() {
-        if (!running) return;
-        var left = Math.max(0, minutes - (Date.now() - startedAt) / 60000);
-        element.textContent = left.toFixed(1);
-        if (left <= 0 && !reloading) {
-            reloading = true;
-            running = false;
-            // Give the server's own deduction pass time to land first.
-            window.setTimeout(function () { window.location.reload(); }, 2000);
-        }
+    function close() {
+        if (!openSheet) return;
+        openSheet.hidden = true;
+        openSheet = null;
+        document.body.classList.remove('pa-sheet-open');
     }
 
-    // The coin poller credits minutes mid-session; re-seed instead of letting
-    // the two writers fight over the same element.
-    window.pisoSetBalance = function (value) {
-        minutes = Number(value) || 0;
-        startedAt = Date.now();
-        running = minutes > 0;
-        reloading = false;
-        element.textContent = minutes.toFixed(1);
-    };
+    function open(id) {
+        var sheet = document.getElementById(id);
+        if (!sheet) return;
+        close();
+        sheet.hidden = false;
+        openSheet = sheet;
+        document.body.classList.add('pa-sheet-open');
+        var focusable = sheet.querySelector('.pa-sheet-close');
+        if (focusable) focusable.focus();
+    }
 
-    window.setInterval(render, 1000);
-    render();
+    document.addEventListener('click', function (event) {
+        var opener = event.target.closest('[data-sheet]');
+        if (opener) {
+            open(opener.getAttribute('data-sheet'));
+            return;
+        }
+        if (event.target.closest('[data-sheet-close]')) close();
+    });
+
+    document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape') close();
+    });
 })();
 </script>
 {% endif %}
+
 {% if device and coinslot_enabled %}
 <script>
 (function () {
