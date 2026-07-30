@@ -10,10 +10,19 @@ Paths are parameters so tests can point them at fixtures instead of the host.
 import logging
 import os
 import shutil
+import threading
+import time
 
 from network.command import command_exists, run_cmd
 
 logger = logging.getLogger(__name__)
+
+# Service state is the only expensive probe here (a fork per service). It
+# changes on the timescale of a crash or a manual restart, not of a dashboard
+# poll, so it is cached well past the default 10s refresh interval.
+SERVICE_CACHE_TTL = 30.0
+_service_lock = threading.Lock()
+_service_cache = {'expires': 0.0, 'names': None, 'value': {}}
 
 THERMAL_PATHS = (
     '/sys/class/thermal/thermal_zone0/temp',
@@ -147,11 +156,10 @@ def format_duration(seconds):
     return f"{minutes}m"
 
 
-def service_status(names):
-    """Map service name -> 'running' | 'stopped' | 'unknown'.
-
-    'unknown' when systemctl is absent (Docker/dev runs), never an exception.
-    """
+def _probe_services(names):
+    """One `systemctl is-active` per service. Callers go through
+    service_status(), which caches this - it is the only part of a health
+    snapshot that forks."""
     statuses = {}
     have_systemctl = command_exists('systemctl')
     for name in names:
@@ -167,6 +175,39 @@ def service_status(names):
             logger.debug("Service probe for %s failed: %s", name, exc)
             statuses[name] = 'unknown'
     return statuses
+
+
+def service_status(names, ttl=SERVICE_CACHE_TTL):
+    """Map service name -> 'running' | 'stopped' | 'unknown'.
+
+    Cached for `ttl` seconds. Every other reader in this module is a pseudo-
+    file read costing microseconds, but this one forks `systemctl` per service
+    - roughly two orders of magnitude more expensive, and systemctl also makes
+    a dbus round-trip. The dashboard re-collects on every live poll (default
+    every 10s, per open admin tab) on a single worker that is also serving
+    captive-portal pages to phones, so probing every time would spend real SBC
+    time re-answering a question whose answer changes maybe once a week.
+
+    The probe runs while holding the lock so a burst of concurrent polls
+    produces one fork, not one per request thread. Pass ttl=0 to force a
+    fresh probe.
+    """
+    names = tuple(names)
+    now = time.monotonic()
+    with _service_lock:
+        if (ttl > 0 and _service_cache['names'] == names
+                and now < _service_cache['expires']):
+            return dict(_service_cache['value'])
+        statuses = _probe_services(names)
+        _service_cache.update(names=names, value=statuses,
+                              expires=now + ttl)
+        return dict(statuses)
+
+
+def _reset_service_cache():
+    """Drop the cached probe. Used by tests; harmless at runtime."""
+    with _service_lock:
+        _service_cache.update(names=None, value={}, expires=0.0)
 
 
 def uplink_online(interface, path=ROUTE_PATH):
