@@ -791,3 +791,48 @@ def test_portal_forms_keep_their_contracts(client):
     assert b'action="/redeem"' in body
     assert b'name="code"' in body
     assert b'name="csrf_token"' in body
+
+
+# --- portal announcements ----------------------------------------------------
+
+def test_post_banner_links_to_a_full_size_sheet(client, services):
+    services.user_manager.create_post(
+        'Summer Promo', 'Buy 20 pesos get 5 minutes free.', 'promo.jpg',
+        active=True)
+
+    body = client.get('/').data
+
+    # The banner is a cropped preview; the sheet carries the uncropped image.
+    assert b'data-sheet="sheet-post-0"' in body
+    assert b'id="sheet-post-0"' in body
+    assert b'class="pa-post-full"' in body
+    assert b'Tap to read more' in body
+
+
+def test_post_description_appears_in_full_in_the_sheet(client, services):
+    long_text = 'Mahaba ito. ' * 20
+    services.user_manager.create_post('Notice', long_text, 'notice.jpg',
+                                      active=True)
+
+    body = client.get('/').data.decode()
+
+    # Clamped to two lines in the banner by CSS, but never truncated server
+    # side - the sheet must hold the whole thing.
+    assert body.count('Mahaba ito.') >= 20
+
+
+def test_each_post_gets_its_own_sheet(client, services):
+    services.user_manager.create_post('One', 'a', 'one.jpg', active=True)
+    services.user_manager.create_post('Two', 'b', 'two.jpg', active=True)
+
+    body = client.get('/').data
+
+    assert b'id="sheet-post-0"' in body
+    assert b'id="sheet-post-1"' in body
+
+
+def test_portal_without_posts_shows_the_plain_banner(client):
+    body = client.get('/').data
+
+    assert b'pa-banner is-plain' in body
+    assert b'sheet-post-0' not in body

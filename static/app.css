@@ -833,14 +833,13 @@ dl.kv dd { margin: 0; font-weight: 700; font-variant-numeric: tabular-nums; }
    the shell only ever holds the status, the clock, and the actions. */
 
 body.portal-app {
-  height: 100dvh;
-  overflow: hidden;
+  min-height: 100dvh;
 }
 
 .portal-shell {
   display: flex;
   flex-direction: column;
-  height: 100dvh;
+  min-height: 100dvh;
   margin: 0 auto;
   max-width: 520px;
   padding: 0;
@@ -862,15 +861,25 @@ body.portal-app {
 .pa-banner {
   background: #0b1220;
   flex: 0 0 auto;
-  height: clamp(120px, 24vh, 210px);
   overflow: hidden;
   position: relative;
 }
 
-.pa-banner .carousel-slides,
-.pa-banner .carousel-slide { height: 100%; }
+/* 4:3 shows far more of a portrait promo than the old 24vh strip did, and the
+   vh cap keeps the controls near the fold on a short phone. */
+.pa-banner-image {
+  aspect-ratio: 4 / 3;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  display: block;
+  max-height: 42vh;
+  padding: 0;
+  width: 100%;
+}
 
 .pa-banner img {
+  display: block;
   height: 100%;
   object-fit: cover;
   width: 100%;
@@ -885,16 +894,44 @@ body.portal-app {
 }
 
 .pa-banner-copy {
-  bottom: 0;
   color: #fff;
-  left: 0;
-  padding: 1rem;
-  position: absolute;
-  right: 0;
-  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.75);
+  padding: 0.7rem 0.9rem 1.5rem;
 }
 
-.pa-banner.is-plain .pa-banner-copy { position: static; }
+.pa-banner.is-plain .pa-banner-copy { padding: 1.25rem; }
+
+/* Two lines in the banner; the rest lives in the post sheet. */
+.pa-banner .carousel-description {
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  display: -webkit-box;
+  font-size: 0.85rem;
+  margin-top: 0.2rem;
+  opacity: 0.85;
+  overflow: hidden;
+}
+
+.pa-banner-more {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  margin-top: 0.35rem;
+  opacity: 0.75;
+  text-transform: uppercase;
+}
+
+.pa-post-full {
+  border-radius: var(--radius-sm);
+  display: block;
+  margin-bottom: 0.9rem;
+  max-height: 55dvh;
+  object-fit: contain;
+  width: 100%;
+}
+
+.pa-post-body { line-height: 1.55; }
+.pa-post-body :last-child { margin-bottom: 0; }
 
 .pa-banner-copy h2 {
   font-size: clamp(1.15rem, 5vw, 1.6rem);
@@ -906,13 +943,22 @@ body.portal-app {
 .pa-banner-copy p { margin: 0.25rem 0 0; opacity: 0.85; }
 
 .pa-banner-dots {
-  bottom: 0.5rem;
+  bottom: 0.4rem;
   display: flex;
-  gap: 0.3rem;
+  gap: 0.45rem;
   justify-content: center;
   left: 0;
   position: absolute;
   right: 0;
+}
+
+.pa-banner-dots .carousel-dot {
+  border-radius: 50%;
+  height: 8px;
+  min-height: 8px;
+  min-width: 8px;
+  padding: 0;
+  width: 8px;
 }
 
 /* The shell body is the flex child that absorbs leftover height. overflow-y
@@ -924,7 +970,6 @@ body.portal-app {
   flex-direction: column;
   gap: clamp(0.4rem, 1.4vh, 0.75rem);
   min-height: 0;
-  overflow-y: auto;
   padding: clamp(0.6rem, 2vh, 1rem) 0.9rem;
 }
 

@@ -15,13 +15,21 @@
     {% if posts %}
     <div class="carousel-slides" aria-live="off">
         {% for post in posts %}
+        {# Tapping the image opens the post full size: the banner is a preview,
+           not the whole announcement. Caption sits below the artwork rather
+           than over it so neither one obscures the other. #}
         <article class="carousel-slide" data-carousel-slide {% if not loop.first %}hidden{% endif %}>
-            <img src="{{ url_for('static', filename='uploads/' ~ post.image_file) }}"
-                 alt="{{ post.title }}">
+            <button type="button" class="pa-banner-image"
+                    data-sheet="sheet-post-{{ loop.index0 }}"
+                    aria-label="Open announcement: {{ post.title }}">
+                <img src="{{ url_for('static', filename='uploads/' ~ post.image_file) }}"
+                     alt="{{ post.title }}">
+            </button>
             <div class="pa-banner-copy">
                 <h2>{{ post.title }}</h2>
                 {% if post.description %}
                 <div class="carousel-description">{{ post.description_html }}</div>
+                <span class="pa-banner-more">Tap to read more</span>
                 {% endif %}
             </div>
         </article>
@@ -250,6 +258,27 @@
         </p>
     </div>
 </div>
+
+{% for post in posts %}
+<div class="pa-sheet" id="sheet-post-{{ loop.index0 }}" hidden role="dialog"
+     aria-modal="true" aria-labelledby="sheet-post-{{ loop.index0 }}-title">
+    <div class="pa-sheet-backdrop" data-sheet-close></div>
+    <div class="pa-sheet-card">
+        <div class="pa-sheet-head">
+            <h2 id="sheet-post-{{ loop.index0 }}-title">{{ post.title }}</h2>
+            <button type="button" class="pa-sheet-close" data-sheet-close aria-label="Close">&times;</button>
+        </div>
+        {# Uncropped here - the banner preview uses object-fit: cover, so a
+           tall poster only shows its middle band until it is opened. #}
+        <img class="pa-post-full"
+             src="{{ url_for('static', filename='uploads/' ~ post.image_file) }}"
+             alt="{{ post.title }}">
+        {% if post.description %}
+        <div class="pa-post-body">{{ post.description_html }}</div>
+        {% endif %}
+    </div>
+</div>
+{% endfor %}
 
 {% if coinslot_enabled %}
 {# The coin walkthrough and the shared slot status. The live view during a
