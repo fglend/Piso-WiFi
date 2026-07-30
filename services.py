@@ -7,7 +7,7 @@ reconfigured the AP and flushed firewall rules on startup.
 import logging
 import time
 
-from config import load_settings
+from config import is_valid_color, load_settings
 from network_controller import NetworkController
 from time_manager import TimeManager
 from user_manager import UserManager
@@ -19,6 +19,16 @@ def _as_bool(value):
     """Parse a stored app_settings flag. Module level, not a method: the
     settings helpers are bound onto plain namespaces in tests."""
     return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _safe_color(value, fallback):
+    """Stored colour if it is a valid hex triple, else the previous value."""
+    candidate = str(value or '').strip()
+    if is_valid_color(candidate):
+        return candidate
+    if candidate:
+        logger.warning("Ignoring invalid stored theme colour %r", candidate)
+    return fallback
 
 
 class Services:
@@ -86,6 +96,10 @@ class Services:
             # first-run default; the database wins after that.
             'pause_on_disconnect': '1' if self.settings.pause_on_disconnect else '0',
             'allow_manual_pause': '1' if self.settings.allow_manual_pause else '0',
+            'theme_accent': self.settings.theme_accent,
+            'theme_accent_strong': self.settings.theme_accent_strong,
+            'portal_logo': self.settings.portal_logo,
+            'portal_footer_text': self.settings.portal_footer_text,
         }
 
     def refresh_runtime_settings(self):
@@ -102,6 +116,15 @@ class Services:
             values['pause_on_disconnect'])
         self.settings.allow_manual_pause = _as_bool(
             values['allow_manual_pause'])
+        # A stored colour is re-validated on every load: the database is the
+        # writable surface here, and a bad row must not reach the <style> block
+        # even if it somehow bypassed the settings form.
+        self.settings.theme_accent = _safe_color(
+            values['theme_accent'], self.settings.theme_accent)
+        self.settings.theme_accent_strong = _safe_color(
+            values['theme_accent_strong'], self.settings.theme_accent_strong)
+        self.settings.portal_logo = values['portal_logo']
+        self.settings.portal_footer_text = values['portal_footer_text']
         return values
 
     def _init_network_controller(self, manage_hardware, max_retries=3):

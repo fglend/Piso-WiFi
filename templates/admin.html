@@ -8,7 +8,10 @@
         <h1 class="mb-0">Admin Dashboard</h1>
         <p class="muted mb-0">Rate: 1 peso = {{ '%g'|format(minutes_per_peso) }} minutes</p>
     </div>
-    <a href="{{ url_for('admin.transactions') }}" class="btn btn-ghost btn-sm">View Transactions</a>
+    <div class="form-row">
+        <a href="{{ url_for('admin.sales_report') }}" class="btn btn-ghost btn-sm">Sales Report</a>
+        <a href="{{ url_for('admin.transactions') }}" class="btn btn-ghost btn-sm">View Transactions</a>
+    </div>
 </div>
 
 <div class="grid grid-3 mb-4">
@@ -56,6 +59,112 @@
         <div class="muted small">per peso, refreshed automatically</div>
     </div>
 </div>
+
+<section class="card mb-4" aria-labelledby="health-title">
+    <div class="card-head">
+        <div>
+            <h2 class="mb-0" id="health-title">System Health</h2>
+            <div class="muted small">Live from the gateway itself</div>
+        </div>
+        <span class="badge {% if health.alerts %}badge-warn{% else %}badge-ok{% endif %}"
+              id="health-badge">
+            {% if health.alerts %}{{ health.alerts|length }} warning(s){% else %}All clear{% endif %}
+        </span>
+    </div>
+    <div class="card-body">
+        <div id="health-alerts">
+            {% for level, message in health.alerts %}
+            <div class="flash flash-{{ 'error' if level == 'danger' else 'warning' }}" role="alert">{{ message }}</div>
+            {% endfor %}
+        </div>
+
+        <div class="health-grid">
+            <div class="health-stat">
+                <div class="metric-label">SoC temperature</div>
+                <div class="metric-value" id="health-temp">
+                    {% if health.temperature_c is not none %}{{ health.temperature_c }}&deg;C{% else %}&mdash;{% endif %}
+                </div>
+                <div class="muted small">
+                    {% if health.temperature_c is none %}no thermal sensor exposed{% else %}warns above 70&deg;C{% endif %}
+                </div>
+            </div>
+
+            <div class="health-stat">
+                <div class="metric-label">CPU load</div>
+                <div class="metric-value" id="health-load">
+                    {% if health.load %}{{ health.load.one }}{% else %}&mdash;{% endif %}
+                </div>
+                {% if health.load %}
+                <div class="meter" role="img"
+                     aria-label="CPU at {{ health.load.percent }} percent">
+                    <span style="width: {{ health.load.percent }}%"></span>
+                </div>
+                <div class="muted small">
+                    {{ health.load.five }} / {{ health.load.fifteen }} over 5 &amp; 15 min
+                    &middot; {{ health.load.cores }} core(s)
+                </div>
+                {% else %}
+                <div class="muted small">load average unavailable</div>
+                {% endif %}
+            </div>
+
+            <div class="health-stat">
+                <div class="metric-label">Memory</div>
+                <div class="metric-value" id="health-memory">
+                    {% if health.memory %}{{ health.memory.percent }}%{% else %}&mdash;{% endif %}
+                </div>
+                {% if health.memory %}
+                <div class="meter"><span style="width: {{ health.memory.percent }}%"></span></div>
+                <div class="muted small">
+                    {{ health.memory.used_mb }} of {{ health.memory.total_mb }} MB used
+                </div>
+                {% else %}
+                <div class="muted small">meminfo unavailable</div>
+                {% endif %}
+            </div>
+
+            <div class="health-stat">
+                <div class="metric-label">Disk</div>
+                <div class="metric-value" id="health-disk">
+                    {% if health.disk %}{{ health.disk.percent }}%{% else %}&mdash;{% endif %}
+                </div>
+                {% if health.disk %}
+                <div class="meter"><span style="width: {{ health.disk.percent }}%"></span></div>
+                <div class="muted small">
+                    {{ health.disk.free_gb }} GB free of {{ health.disk.total_gb }} GB
+                </div>
+                {% else %}
+                <div class="muted small">disk usage unavailable</div>
+                {% endif %}
+            </div>
+
+            <div class="health-stat">
+                <div class="metric-label">Uptime</div>
+                <div class="metric-value" id="health-uptime">
+                    {% if health.uptime %}{{ health.uptime.label }}{% else %}&mdash;{% endif %}
+                </div>
+                <div class="muted small">since last reboot</div>
+            </div>
+
+            <div class="health-stat">
+                <div class="metric-label">Services</div>
+                <div class="health-services" id="health-services">
+                    {% for name, state in health.services.items() %}
+                    <span class="badge {% if state == 'running' %}badge-ok{% elif state == 'stopped' %}badge-danger{% else %}badge-muted{% endif %}">
+                        {{ name }}: {{ state }}
+                    </span>
+                    {% endfor %}
+                    {% if health.uplink_online is not none %}
+                    <span class="badge {% if health.uplink_online %}badge-ok{% else %}badge-danger{% endif %}">
+                        uplink {{ health.uplink_interface }}:
+                        {{ 'online' if health.uplink_online else 'no route' }}
+                    </span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
 
 <div class="card">
     <div class="card-head">
@@ -298,8 +407,51 @@
                 setText('live-rate', Number(data.minutes_per_peso || 0).toLocaleString(undefined, {
                     maximumFractionDigits: 1
                 }));
+                refreshHealth(data.health);
             })
             .catch(function () {});
+    }
+
+    // Health values change every poll; the surrounding markup does not, so
+    // only the numbers, meters and badges are rewritten. A metric the host
+    // cannot report arrives as null and renders as an em dash, matching the
+    // server-side placeholder.
+    function setMeter(id, percent) {
+        var meter = document.querySelector('#' + id + ' + .meter span, #' + id + ' ~ .meter span');
+        if (meter) meter.style.width = Math.max(0, Math.min(100, percent)) + '%';
+    }
+
+    function refreshHealth(health) {
+        if (!health) return;
+        setText('health-temp', health.temperature_c === null
+            ? '—' : health.temperature_c + '°C');
+        setText('health-load', health.load ? health.load.one : '—');
+        setText('health-memory', health.memory ? health.memory.percent + '%' : '—');
+        setText('health-disk', health.disk ? health.disk.percent + '%' : '—');
+        setText('health-uptime', health.uptime ? health.uptime.label : '—');
+        if (health.load) setMeter('health-load', health.load.percent);
+        if (health.memory) setMeter('health-memory', health.memory.percent);
+        if (health.disk) setMeter('health-disk', health.disk.percent);
+
+        var badge = document.getElementById('health-badge');
+        var alerts = health.alerts || [];
+        if (badge) {
+            badge.className = 'badge ' + (alerts.length ? 'badge-warn' : 'badge-ok');
+            badge.textContent = alerts.length
+                ? alerts.length + ' warning(s)' : 'All clear';
+        }
+        var container = document.getElementById('health-alerts');
+        if (container) {
+            container.textContent = '';
+            alerts.forEach(function (entry) {
+                var box = document.createElement('div');
+                box.className = 'flash flash-'
+                    + (entry[0] === 'danger' ? 'error' : 'warning');
+                box.setAttribute('role', 'alert');
+                box.textContent = entry[1];
+                container.appendChild(box);
+            });
+        }
     }
 
     var deviceTabs = Array.from(document.querySelectorAll('[data-device-tab]'));

@@ -586,3 +586,244 @@ dl.kv dd { margin: 0; font-weight: 700; font-variant-numeric: tabular-nums; }
     background-clip: content-box;
   }
 }
+
+/* --- system health panel (admin dashboard) ------------------------------- */
+
+.health-grid {
+  display: grid;
+  gap: 0.9rem;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.health-stat {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem 0.85rem;
+}
+
+.health-stat .metric-value {
+  font-size: 1.5rem;
+  line-height: 1.1;
+  margin: 0.15rem 0 0.35rem;
+}
+
+.health-services {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+}
+
+/* Thin utilisation bar. Reused by CPU, memory and disk. */
+.meter {
+  background: var(--border);
+  border-radius: 999px;
+  height: 6px;
+  margin-bottom: 0.35rem;
+  overflow: hidden;
+}
+
+.meter > span {
+  background: var(--accent);
+  border-radius: inherit;
+  display: block;
+  height: 100%;
+  transition: width 0.4s ease;
+}
+
+/* --- sales report -------------------------------------------------------- */
+
+.preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+/* Dependency-free bar chart: the portal serves phones with no internet, so a
+   charting library is not available to us. */
+.bar-chart {
+  display: grid;
+  gap: 0.45rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.bar-chart li {
+  align-items: center;
+  display: grid;
+  gap: 0.6rem;
+  grid-template-columns: minmax(70px, auto) 1fr minmax(70px, auto);
+}
+
+.bar-label,
+.bar-value {
+  color: var(--muted);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.bar-value { text-align: right; }
+
+.bar-track {
+  background: var(--surface-2);
+  border-radius: 999px;
+  height: 12px;
+  overflow: hidden;
+}
+
+.bar-fill {
+  background: var(--accent);
+  border-radius: inherit;
+  display: block;
+  height: 100%;
+  min-width: 2px;
+}
+
+.bar-fill.is-negative { background: var(--danger); }
+
+/* --- branding ------------------------------------------------------------ */
+
+.brand-logo {
+  height: 22px;
+  margin-right: 0.45rem;
+  vertical-align: middle;
+  width: auto;
+}
+
+.logo-preview {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  height: 44px;
+  padding: 0.25rem;
+  width: auto;
+}
+
+.checkbox {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.4rem;
+  font-weight: 400;
+}
+
+.portal-footer-note {
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+
+/* --- portal hero status -------------------------------------------------- */
+
+.hero-status {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--ok);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  margin-bottom: 1rem;
+  padding: 1.1rem 1.2rem;
+}
+
+.hero-status.is-paused { border-left-color: var(--warn); }
+.hero-status.is-empty { border-left-color: var(--danger); }
+
+.hero-top {
+  align-items: flex-start;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+}
+
+.hero-heading {
+  font-size: 1.25rem;
+  margin: 0.1rem 0 0;
+}
+
+.hero-clock {
+  align-items: baseline;
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+.hero-clock > span:first-child {
+  color: var(--accent);
+  font-size: 3rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.is-empty .hero-clock > span:first-child { color: var(--danger); }
+.is-paused .hero-clock > span:first-child { color: var(--warn); }
+
+.hero-clock-unit {
+  color: var(--muted);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.hero-note {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin-top: 0.4rem;
+}
+
+.hero-facts {
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 0.6rem;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  margin: 0.9rem 0 0;
+  padding-top: 0.8rem;
+}
+
+.hero-facts dt {
+  color: var(--muted);
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.hero-facts dd {
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin: 0.15rem 0 0;
+}
+
+/* --- portal price list --------------------------------------------------- */
+
+.price-list {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.price-list li {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.6rem 0.7rem;
+}
+
+.price-amount {
+  color: var(--accent);
+  display: block;
+  font-size: 1.3rem;
+  font-weight: 800;
+}
+
+.price-label {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+@media (max-width: 480px) {
+  .hero-clock > span:first-child { font-size: 2.5rem; }
+  .bar-chart li { grid-template-columns: minmax(60px, auto) 1fr; }
+  .bar-value { grid-column: 2; text-align: left; }
+}

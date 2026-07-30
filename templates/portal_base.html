@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}PISO WIFI{% endblock %}</title>
     <link rel="stylesheet" href="{{ static_url('app.css') }}">
+    {% include "_theme.html" %}
 </head>
 <body>
     <main class="container container-narrow">
@@ -17,6 +18,9 @@
         {% block content %}{% endblock %}
 
         <footer class="portal-footer">
+            {% if theme.footer_text %}
+            <div class="portal-footer-note">{{ theme.footer_text }}</div>
+            {% endif %}
             PISO WIFI &middot; <a href="{{ url_for('portal.login') }}">Admin</a>
         </footer>
     </main>

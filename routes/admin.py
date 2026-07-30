@@ -1,17 +1,29 @@
 """Admin dashboard and management actions. Every route requires an admin
 session and every submitted MAC address is validated before use."""
+import csv
+import datetime as dt
+import io
 import logging
 import os
 from pathlib import Path
 import re
 import secrets
 
-from flask import (Blueprint, abort, current_app, flash, jsonify, redirect,
-                   render_template, request, url_for)
+from flask import (Blueprint, Response, abort, current_app, flash, jsonify,
+                   redirect, render_template, request, url_for)
 
+import system_info
 from auth import admin_required, request_is_loopback
+from config import is_valid_color
 from network.ap_manager import is_valid_mac
 from pricing import compute_minutes, format_duration
+
+# Report ranges the UI offers as one-tap presets, in days back from today.
+REPORT_PRESETS = {'today': 0, '7d': 6, '30d': 29, '90d': 89}
+REPORT_GROUPINGS = ('day', 'week', 'month')
+# Matches UserManager.get_transactions_between's default cap; the report warns
+# the operator when a range returns this many rows.
+REPORT_ROW_LIMIT = 10000
 
 admin_bp = Blueprint('admin', __name__)
 logger = logging.getLogger(__name__)
@@ -107,6 +119,7 @@ def dashboard():
                                plans=plans,
                                minutes_per_peso=svc.settings.minutes_per_peso,
                                revenue=revenue,
+                               health=system_info.collect(svc.settings),
                                app_settings=app_settings,
                                active_device_count=active_device_count)
     except Exception as e:
@@ -131,6 +144,7 @@ def dashboard_live():
         'device_state_signature': _device_state_signature(
             devices, disconnected_devices),
         'minutes_per_peso': svc.settings.minutes_per_peso,
+        'health': system_info.collect(svc.settings),
     })
 
 
@@ -175,7 +189,9 @@ def update_settings():
             '1' if request.form.get('pause_on_disconnect') else '0'),
         'allow_manual_pause': (
             '1' if request.form.get('allow_manual_pause') else '0'),
+        'portal_footer_text': _form_text('portal_footer_text', maximum=120),
     }
+    values.update(_theme_values(svc))
 
     settings_saved = svc.user_manager.update_app_settings(values)
     plan_saved = svc.user_manager.upsert_plan('default', default_download, default_upload)
@@ -187,6 +203,46 @@ def update_settings():
     return redirect(url_for('admin.update_settings'))
 
 
+def _theme_values(svc):
+    """Theme keys for the settings write.
+
+    An invalid or absent colour keeps the value already in force rather than
+    snapping back to the shipped default, so a typo in one field never wipes
+    branding the operator set earlier.
+    """
+    current = svc.settings
+    values = {}
+    for field_name, existing in (
+        ('theme_accent', current.theme_accent),
+        ('theme_accent_strong', current.theme_accent_strong),
+    ):
+        candidate = (request.form.get(field_name) or '').strip()
+        if candidate and not is_valid_color(candidate):
+            flash(f'Ignored invalid colour for {field_name.replace("_", " ")}',
+                  'warning')
+            candidate = ''
+        values[field_name] = candidate or existing
+
+    if request.form.get('remove_logo'):
+        if current.portal_logo:
+            _remove_image(current.portal_logo)
+        values['portal_logo'] = ''
+        return values
+
+    uploaded = _save_image(request.files.get('portal_logo'))
+    if uploaded:
+        # Only drop the old file once the replacement is safely on disk.
+        if current.portal_logo:
+            _remove_image(current.portal_logo)
+        values['portal_logo'] = uploaded
+    elif request.files.get('portal_logo') and request.files['portal_logo'].filename:
+        flash('Logo must be a valid JPG, PNG, GIF or WebP image', 'error')
+        values['portal_logo'] = current.portal_logo
+    else:
+        values['portal_logo'] = current.portal_logo
+    return values
+
+
 @admin_bp.route('/admin/revenue/reset', methods=['POST'])
 @admin_required
 def reset_revenue():
@@ -194,6 +250,84 @@ def reset_revenue():
     removed = svc.user_manager.reset_revenue()
     flash(f'Revenue reset to zero ({removed} record(s) cleared).', 'success')
     return redirect(url_for('admin.update_settings'))
+
+
+def _report_range():
+    """Resolve the requested report window to (start, end, preset, group_by).
+
+    Explicit start/end win over a preset. Anything unparseable falls back to
+    the last 7 days rather than erroring - a mistyped URL should still show
+    the operator a usable report.
+    """
+    today = dt.date.today()
+    preset = request.args.get('preset', '')
+    group_by = request.args.get('group_by', '')
+    if group_by not in REPORT_GROUPINGS:
+        group_by = 'day'
+
+    start_raw = request.args.get('start', '')
+    end_raw = request.args.get('end', '')
+    start = _parse_date(start_raw)
+    end = _parse_date(end_raw)
+
+    if start and end:
+        preset = 'custom'
+    else:
+        days_back = REPORT_PRESETS.get(preset)
+        if days_back is None:
+            preset, days_back = '7d', REPORT_PRESETS['7d']
+        start, end = today - dt.timedelta(days=days_back), today
+
+    if start > end:
+        start, end = end, start
+    return start, end, preset, group_by
+
+
+def _parse_date(value):
+    try:
+        return dt.date.fromisoformat((value or '').strip())
+    except ValueError:
+        return None
+
+
+@admin_bp.route('/admin/reports')
+@admin_required
+def sales_report():
+    svc = _services()
+    start, end, preset, group_by = _report_range()
+    report = svc.user_manager.get_sales_report(
+        start.isoformat(), end.isoformat(), group_by)
+    return render_template(
+        'reports.html', report=report, start=start, end=end,
+        preset=preset, group_by=group_by,
+        groupings=REPORT_GROUPINGS, presets=list(REPORT_PRESETS),
+        app_settings=svc.refresh_runtime_settings())
+
+
+@admin_bp.route('/admin/reports/export.csv')
+@admin_required
+def export_sales_csv():
+    svc = _services()
+    start, end, _, _ = _report_range()
+    rows = svc.user_manager.get_transactions_between(
+        start.isoformat(), end.isoformat(), limit=REPORT_ROW_LIMIT)
+    if len(rows) >= REPORT_ROW_LIMIT:
+        logger.warning(
+            "Sales export for %s..%s hit the %s row cap and was truncated",
+            start, end, REPORT_ROW_LIMIT)
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(['created_at', 'mac_address', 'source', 'amount', 'minutes'])
+    for row in rows:
+        writer.writerow([row['created_at'], row['mac_address'], row['source'],
+                         f"{float(row['amount']):.2f}", row['minutes'] or 0])
+
+    filename = f"sales-{start.isoformat()}-to-{end.isoformat()}.csv"
+    return Response(
+        buffer.getvalue(),
+        mimetype='text/csv',
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'})
 
 
 @admin_bp.route('/add_time', methods=['POST'])

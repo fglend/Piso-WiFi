@@ -1,3 +1,4 @@
+import datetime as dt
 from io import BytesIO
 
 from post_formatting import render_post_description
@@ -243,7 +244,8 @@ def test_portal_displays_network_speed_in_mbps(client):
     resp = client.get('/')
 
     assert resp.status_code == 200
-    assert b'2.048 Mbps down / 1.024 Mbps up' in resp.data
+    # Rendered by the hero card's Speed fact as "<down> / <up> Mbps".
+    assert b'2.048 / 1.024 Mbps' in resp.data
     assert b'kbps down' not in resp.data
 
 
@@ -551,3 +553,149 @@ def test_admin_can_deduct_revenue(admin_client, csrf_token, services):
 def test_deduct_revenue_requires_login(client, csrf_token):
     resp = client.post('/transactions', data={'csrf_token': csrf_token, 'amount': 10})
     assert resp.status_code == 302
+
+
+# --- system health panel -----------------------------------------------------
+
+def test_dashboard_renders_the_health_card(admin_client):
+    resp = admin_client.get('/admin')
+
+    assert resp.status_code == 200
+    assert b'System Health' in resp.data
+    assert b'SoC temperature' in resp.data
+
+
+def test_dashboard_survives_a_host_with_no_health_sources(admin_client, monkeypatch):
+    import system_info
+    monkeypatch.setattr(system_info, 'THERMAL_PATHS', ('/nonexistent/temp',))
+    monkeypatch.setattr(system_info, 'LOADAVG_PATH', '/nonexistent/loadavg')
+    monkeypatch.setattr(system_info, 'MEMINFO_PATH', '/nonexistent/meminfo')
+    monkeypatch.setattr(system_info, 'UPTIME_PATH', '/nonexistent/uptime')
+
+    resp = admin_client.get('/admin')
+
+    # A dashboard must never 500 because a board lacks a thermal zone.
+    assert resp.status_code == 200
+    assert b'no thermal sensor exposed' in resp.data
+
+
+def test_dashboard_live_includes_health(admin_client):
+    payload = admin_client.get('/admin/live').get_json()
+
+    assert 'health' in payload
+    assert 'alerts' in payload['health']
+    assert 'services' in payload['health']
+
+
+# --- sales report ------------------------------------------------------------
+
+def test_sales_report_renders(admin_client):
+    resp = admin_client.get('/admin/reports')
+
+    assert resp.status_code == 200
+    assert b'Sales Report' in resp.data
+    assert b'Export CSV' in resp.data
+
+
+def test_sales_report_defaults_to_seven_days(admin_client):
+    resp = admin_client.get('/admin/reports')
+    today = dt.date.today()
+
+    assert resp.status_code == 200
+    assert str(today).encode() in resp.data
+    assert str(today - dt.timedelta(days=6)).encode() in resp.data
+
+
+def test_sales_report_accepts_an_explicit_range(admin_client):
+    resp = admin_client.get('/admin/reports?start=2026-01-01&end=2026-01-31')
+
+    assert resp.status_code == 200
+    assert b'2026-01-01 to 2026-01-31' in resp.data
+
+
+def test_sales_report_swaps_a_reversed_range(admin_client):
+    resp = admin_client.get('/admin/reports?start=2026-01-31&end=2026-01-01')
+
+    assert resp.status_code == 200
+    assert b'2026-01-01 to 2026-01-31' in resp.data
+
+
+def test_sales_report_falls_back_on_an_unparseable_date(admin_client):
+    # A mistyped URL should still show a usable report, not a 400.
+    resp = admin_client.get('/admin/reports?start=not-a-date&end=also-bad')
+
+    assert resp.status_code == 200
+    assert str(dt.date.today()).encode() in resp.data
+
+
+def test_sales_report_rejects_an_unknown_grouping(admin_client):
+    resp = admin_client.get('/admin/reports?group_by=hour')
+
+    assert resp.status_code == 200
+    assert b'grouped by day' in resp.data
+
+
+def test_csv_export_has_a_header_and_attachment_name(admin_client):
+    resp = admin_client.get('/admin/reports/export.csv?start=2026-01-01&end=2026-01-31')
+
+    assert resp.status_code == 200
+    assert resp.mimetype == 'text/csv'
+    assert 'attachment' in resp.headers['Content-Disposition']
+    assert 'sales-2026-01-01-to-2026-01-31.csv' in resp.headers['Content-Disposition']
+    assert resp.data.splitlines()[0] == b'created_at,mac_address,source,amount,minutes'
+
+
+def test_csv_export_rows_reconcile_with_the_report(admin_client, services):
+    services.user_manager.add_time(MAC, 5, 25)
+    services.user_manager.add_time(OTHER_MAC, 10, 50)
+    today = dt.date.today().isoformat()
+
+    resp = admin_client.get(f'/admin/reports/export.csv?start={today}&end={today}')
+    rows = [line for line in resp.data.decode().splitlines()[1:] if line]
+    exported_total = sum(float(line.split(',')[3]) for line in rows)
+    report = services.user_manager.get_sales_report(today, today, 'day')
+
+    assert len(rows) == report['totals']['count']
+    assert exported_total == report['totals']['net']
+
+
+def test_reports_require_admin(client):
+    assert client.get('/admin/reports').status_code in (302, 401, 403)
+    assert client.get('/admin/reports/export.csv').status_code in (302, 401, 403)
+
+
+# --- theming -----------------------------------------------------------------
+
+def test_theme_colours_are_applied_to_the_portal(client, services):
+    services.user_manager.update_app_settings({'theme_accent': '#ff0000'})
+    services.refresh_runtime_settings()
+
+    # Plain client: an admin session at / is redirected to the dashboard.
+    resp = client.get('/')
+
+    assert b'--accent: #ff0000' in resp.data
+
+
+def test_default_theme_emits_no_override_block(client):
+    resp = client.get('/')
+
+    # The shipped palette already lives in app.css; re-declaring it would be
+    # dead weight on every captive-portal page load.
+    assert b'--accent: #0f766e' not in resp.data
+
+
+def test_invalid_stored_colour_is_ignored(services):
+    services.user_manager.update_app_settings({'theme_accent': 'red; }'})
+    services.refresh_runtime_settings()
+
+    # Anything that is not #rrggbb must never reach the <style> block.
+    assert services.settings.theme_accent == '#0f766e'
+
+
+def test_settings_page_exposes_branding_controls(admin_client):
+    resp = admin_client.get('/admin/settings')
+
+    assert resp.status_code == 200
+    assert b'Branding' in resp.data
+    assert b'name="theme_accent"' in resp.data
+    assert b'multipart/form-data' in resp.data

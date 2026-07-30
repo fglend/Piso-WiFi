@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+
+{% block title %}Sales Report{% endblock %}
+
+{% block content %}
+{% set preset_labels = {'today': 'Today', '7d': 'Last 7 days',
+                        '30d': 'Last 30 days', '90d': 'Last 90 days'} %}
+<div class="row-between mb-3">
+    <div>
+        <h1 class="mb-0">Sales Report</h1>
+        <p class="muted mb-0">{{ start }} to {{ end }} &middot; grouped by {{ group_by }}</p>
+    </div>
+    {# The export carries the same query string, so it always exports exactly
+       the range on screen rather than a fresh default window. #}
+    <a class="btn btn-primary btn-sm"
+       href="{{ url_for('admin.export_sales_csv', start=start, end=end,
+                        preset=preset, group_by=group_by) }}">Export CSV</a>
+</div>
+
+<section class="card mb-4" aria-labelledby="filter-title">
+    <div class="card-head">
+        <h2 class="mb-0" id="filter-title">Range</h2>
+    </div>
+    <div class="card-body">
+        <div class="preset-row mb-3">
+            {% for name in presets %}
+            <a class="btn btn-sm {% if preset == name %}btn-primary{% else %}btn-ghost{% endif %}"
+               href="{{ url_for('admin.sales_report', preset=name, group_by=group_by) }}">
+                {{ preset_labels.get(name, name) }}
+            </a>
+            {% endfor %}
+        </div>
+        <form method="GET" action="{{ url_for('admin.sales_report') }}" class="form-row">
+            <label class="visually-hidden" for="start">Start date</label>
+            <input type="date" id="start" name="start" value="{{ start }}" required>
+            <label class="visually-hidden" for="end">End date</label>
+            <input type="date" id="end" name="end" value="{{ end }}" required>
+            <label class="visually-hidden" for="group_by">Group by</label>
+            <select id="group_by" name="group_by">
+                {% for option in groupings %}
+                <option value="{{ option }}" {% if group_by == option %}selected{% endif %}>
+                    By {{ option }}
+                </option>
+                {% endfor %}
+            </select>
+            <button type="submit" class="btn btn-primary btn-sm">Apply</button>
+        </form>
+    </div>
+</section>
+
+<div class="grid grid-3 mb-4">
+    <div class="metric metric-hero">
+        <div class="metric-label">Net revenue</div>
+        <div class="metric-value">&#8369;{{ '%.2f'|format(report.totals.net) }}</div>
+        <div class="muted small">gross less adjustments</div>
+    </div>
+    <div class="metric">
+        <div class="metric-label">Gross takings</div>
+        <div class="metric-value">&#8369;{{ '%.2f'|format(report.totals.gross) }}</div>
+        <div class="muted small">
+            {{ report.totals.count }} transaction(s)
+            {% if report.totals.adjustments %}
+            &middot; &#8369;{{ '%.2f'|format(report.totals.adjustments) }} adjusted out
+            {% endif %}
+        </div>
+    </div>
+    <div class="metric">
+        <div class="metric-label">Time sold</div>
+        <div class="metric-value">{{ report.totals.minutes }}</div>
+        <div class="muted small">minutes credited in this range</div>
+    </div>
+</div>
+
+<div class="grid grid-2 mb-4">
+    <section class="card mb-0" aria-labelledby="bysource-title">
+        <div class="card-head">
+            <h2 class="mb-0" id="bysource-title">By Source</h2>
+        </div>
+        <div class="table-wrap">
+            <table class="table">
+                <thead><tr><th>Source</th><th>Transactions</th><th>Net</th></tr></thead>
+                <tbody>
+                    {% for row in report.by_source %}
+                    <tr>
+                        <td>{{ row.source }}</td>
+                        <td>{{ row.count }}</td>
+                        <td>&#8369;{{ '%.2f'|format(row.net) }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="3" class="text-center muted">No sales in this range</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="card mb-0" aria-labelledby="trend-title">
+        <div class="card-head">
+            <h2 class="mb-0" id="trend-title">Trend</h2>
+        </div>
+        <div class="card-body">
+            {% if report.buckets %}
+            {# Pure-CSS bar chart. The portal must work with no internet, so a
+               charting library is not an option - these are divs sized by
+               percentage of the largest bucket. #}
+            {% set peak = report.buckets | map(attribute='net') | map('abs') | max %}
+            <ul class="bar-chart">
+                {% for bucket in report.buckets %}
+                <li>
+                    <span class="bar-label">{{ bucket.period }}</span>
+                    <span class="bar-track">
+                        <span class="bar-fill{% if bucket.net < 0 %} is-negative{% endif %}"
+                              style="width: {{ (bucket.net | abs / peak * 100) if peak else 0 }}%"></span>
+                    </span>
+                    <span class="bar-value">&#8369;{{ '%.2f'|format(bucket.net) }}</span>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p class="muted mb-0">No sales in this range.</p>
+            {% endif %}
+        </div>
+    </section>
+</div>
+
+<section class="card" aria-labelledby="breakdown-title">
+    <div class="card-head">
+        <h2 class="mb-0" id="breakdown-title">Breakdown by {{ group_by }}</h2>
+    </div>
+    <div class="table-wrap">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Period</th>
+                    <th>Transactions</th>
+                    <th>Gross</th>
+                    <th>Adjustments</th>
+                    <th>Net</th>
+                    <th>Minutes</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for bucket in report.buckets %}
+                <tr>
+                    <td>{{ bucket.period }}</td>
+                    <td>{{ bucket.count }}</td>
+                    <td>&#8369;{{ '%.2f'|format(bucket.gross) }}</td>
+                    <td>
+                        {% if bucket.adjustments %}
+                        &minus;&#8369;{{ '%.2f'|format(bucket.adjustments) }}
+                        {% else %}&mdash;{% endif %}
+                    </td>
+                    <td>&#8369;{{ '%.2f'|format(bucket.net) }}</td>
+                    <td>{{ bucket.minutes }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="6" class="text-center muted">No sales in this range</td></tr>
+                {% endfor %}
+            </tbody>
+            {% if report.buckets %}
+            <tfoot>
+                <tr>
+                    <th>Total</th>
+                    <th>{{ report.totals.count }}</th>
+                    <th>&#8369;{{ '%.2f'|format(report.totals.gross) }}</th>
+                    <th>&minus;&#8369;{{ '%.2f'|format(report.totals.adjustments) }}</th>
+                    <th>&#8369;{{ '%.2f'|format(report.totals.net) }}</th>
+                    <th>{{ report.totals.minutes }}</th>
+                </tr>
+            </tfoot>
+            {% endif %}
+        </table>
+    </div>
+</section>
+{% endblock %}

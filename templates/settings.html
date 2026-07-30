@@ -16,7 +16,10 @@
         <h2 class="mb-0">Pricing &amp; Coinslot</h2>
     </div>
     <div class="card-body">
-        <form action="{{ url_for('admin.update_settings') }}" method="POST">
+        {# multipart so the branding logo can ride along with the other
+           settings; every existing text field posts identically. #}
+        <form action="{{ url_for('admin.update_settings') }}" method="POST"
+              enctype="multipart/form-data">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <div class="form-grid mb-3">
                 <div>
@@ -50,6 +53,55 @@
                            value="{{ app_settings.portal_subtitle }}" required>
                 </div>
             </div>
+
+            <h2>Branding</h2>
+            <div class="form-grid mb-3">
+                <div>
+                    <label for="theme_accent">Accent colour</label>
+                    <div class="form-row">
+                        <input id="theme_accent" name="theme_accent" type="color"
+                               value="{{ app_settings.theme_accent }}"
+                               aria-describedby="theme_accent_help">
+                        <output class="muted small" id="theme_accent_help">
+                            {{ app_settings.theme_accent }}
+                        </output>
+                    </div>
+                </div>
+                <div>
+                    <label for="theme_accent_strong">Accent (pressed)</label>
+                    <div class="form-row">
+                        <input id="theme_accent_strong" name="theme_accent_strong" type="color"
+                               value="{{ app_settings.theme_accent_strong }}"
+                               aria-describedby="theme_accent_strong_help">
+                        <output class="muted small" id="theme_accent_strong_help">
+                            {{ app_settings.theme_accent_strong }}
+                        </output>
+                    </div>
+                </div>
+                <div>
+                    <label for="portal_logo">Logo</label>
+                    <input id="portal_logo" name="portal_logo" type="file"
+                           accept=".jpg,.jpeg,.png,.gif,.webp">
+                    <div class="muted small">JPG, PNG, GIF or WebP. Shown in the header.</div>
+                </div>
+                <div>
+                    <label for="portal_footer_text">Portal footer note</label>
+                    <input id="portal_footer_text" name="portal_footer_text" type="text"
+                           maxlength="120" value="{{ app_settings.portal_footer_text }}"
+                           placeholder="e.g. Salamat po!">
+                </div>
+            </div>
+            {% if app_settings.portal_logo %}
+            <div class="form-row mb-3">
+                <img class="logo-preview"
+                     src="{{ url_for('static', filename='uploads/' ~ app_settings.portal_logo) }}"
+                     alt="Current logo">
+                <label class="checkbox">
+                    <input type="checkbox" name="remove_logo" value="1">
+                    Remove the current logo
+                </label>
+            </div>
+            {% endif %}
 
             <h2>Defaults &amp; Dashboard</h2>
             <div class="form-grid mb-3">

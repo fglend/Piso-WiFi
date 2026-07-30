@@ -1181,6 +1181,114 @@ class UserManager:
             }
         return out.result
 
+    # --- sales reporting ----------------------------------------------------
+
+    # Grouping expressions keyed by the report's group_by parameter. Kept as a
+    # whitelist because the value is interpolated into SQL: it can never come
+    # straight from the query string.
+    _REPORT_GROUPING = {
+        'day': "date(t.created_at, 'localtime')",
+        'week': "strftime('%Y-W%W', t.created_at, 'localtime')",
+        'month': "strftime('%Y-%m', t.created_at, 'localtime')",
+    }
+
+    @staticmethod
+    def _range_clause():
+        """Shared WHERE for range reports.
+
+        Filters on the local date so a range means what the operator sees on
+        screen, and adds a bound on the raw UTC column so
+        idx_transactions_created_at still drives the scan.
+        """
+        return '''
+            WHERE date(t.created_at, 'localtime') BETWEEN ? AND ?
+              AND t.created_at >= datetime(? || ' 00:00:00', 'utc')
+              AND t.created_at < datetime(? || ' 00:00:00', '+1 day', 'utc')
+        '''
+
+    @staticmethod
+    def _range_params(start_date, end_date):
+        return (start_date, end_date, start_date, end_date)
+
+    def get_sales_report(self, start_date, end_date, group_by='day'):
+        """Grouped sales for an inclusive local-date range.
+
+        Returns {'buckets': [...], 'by_source': [...], 'totals': {...}}.
+        Gross counts positive rows only, adjustments are the magnitude of the
+        negative rows, and net is their sum - so a period whose corrections
+        exceed its takings reads as negative rather than silently clamping.
+        """
+        empty = {'buckets': [], 'by_source': [],
+                 'totals': {'gross': 0.0, 'adjustments': 0.0, 'net': 0.0,
+                            'count': 0, 'minutes': 0}}
+        if group_by not in self._REPORT_GROUPING:
+            group_by = 'day'
+        expression = self._REPORT_GROUPING[group_by]
+
+        with self._with_conn('Building sales report',
+                             on_error=lambda: dict(empty)) as (conn, out):
+            where = self._range_clause()
+            params = self._range_params(start_date, end_date)
+
+            bucket_rows = conn.execute(f'''
+                SELECT {expression} AS period,
+                       COALESCE(SUM(CASE WHEN t.amount > 0 THEN t.amount END), 0) AS gross,
+                       COALESCE(SUM(CASE WHEN t.amount < 0 THEN -t.amount END), 0) AS adjustments,
+                       COALESCE(SUM(t.amount), 0) AS net,
+                       COALESCE(SUM(CASE WHEN t.amount > 0 THEN t.minutes END), 0) AS minutes,
+                       COUNT(*) AS count
+                FROM transactions t
+                {where}
+                GROUP BY period
+                ORDER BY period ASC
+            ''', params).fetchall()
+
+            source_rows = conn.execute(f'''
+                SELECT COALESCE(t.source, 'unknown') AS source,
+                       COALESCE(SUM(t.amount), 0) AS net,
+                       COUNT(*) AS count
+                FROM transactions t
+                {where}
+                GROUP BY source
+                ORDER BY net DESC
+            ''', params).fetchall()
+
+            buckets = [dict(row) for row in bucket_rows]
+            out.result = {
+                'buckets': buckets,
+                'by_source': [dict(row) for row in source_rows],
+                'totals': {
+                    'gross': float(sum(b['gross'] for b in buckets)),
+                    'adjustments': float(sum(b['adjustments'] for b in buckets)),
+                    'net': float(sum(b['net'] for b in buckets)),
+                    'count': int(sum(b['count'] for b in buckets)),
+                    'minutes': int(sum(b['minutes'] for b in buckets)),
+                },
+            }
+        return out.result
+
+    def get_transactions_between(self, start_date, end_date, limit=10000):
+        """Individual transactions in an inclusive local-date range.
+
+        Feeds the CSV export, so it returns exactly the rows the on-screen
+        report aggregates. The limit is a memory guard on an SBC, not a page
+        size - the report warns when it truncates.
+        """
+        with self._with_conn('Listing transactions in range',
+                             default=[]) as (conn, out):
+            rows = conn.execute(f'''
+                SELECT datetime(t.created_at, 'localtime') AS created_at,
+                       COALESCE(u.mac_address, '') AS mac_address,
+                       COALESCE(t.source, 'unknown') AS source,
+                       t.amount, t.minutes
+                FROM transactions t LEFT JOIN users u ON u.id = t.user_id
+                {self._range_clause()}
+                ORDER BY t.created_at ASC
+                LIMIT ?
+            ''', (*self._range_params(start_date, end_date), limit)).fetchall()
+            out.result = [dict(row) for row in rows]
+        return out.result
+
     def reset_revenue(self):
         """Zero all revenue by clearing the transactions ledger. Device
         balances, vouchers and time_logs are untouched. Returns the number of

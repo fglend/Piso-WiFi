@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 _INSECURE_DEFAULTS = {'your-secret-key-here', 'admin123', 'pisowifi123'}
 _MAC_ADDRESS_RE = re.compile(r'^(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$')
 _HOSTNAME_RE = re.compile(r'^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$')
+_HEX_COLOR_RE = re.compile(r'^#[0-9A-Fa-f]{6}$')
 
 
 def _env_int(name, default):
@@ -29,6 +30,22 @@ def _env_float(name, default):
     except (TypeError, ValueError):
         logger.warning(f"Invalid float for {name}, using default {default}")
         return float(default)
+
+
+def is_valid_color(value):
+    """True for a plain #rrggbb triple. Anything else is refused rather than
+    sanitised: these values are written straight into a <style> block."""
+    return bool(_HEX_COLOR_RE.match((value or '').strip()))
+
+
+def _env_color(name, default):
+    value = (os.getenv(name) or '').strip()
+    if not value:
+        return default
+    if not is_valid_color(value):
+        logger.warning(f"Invalid hex colour for {name}, using default {default}")
+        return default
+    return value
 
 
 def _env_bool(name, default):
@@ -62,6 +79,18 @@ class Settings:
     portal_hostname: str = field(
         default_factory=lambda: os.getenv(
             'PORTAL_HOSTNAME', 'glend-pisowifi').strip().lower())
+    # Operator branding. These land in a <style> block as CSS custom property
+    # values, so a malformed colour would be injected markup - _env_color
+    # rejects anything that is not a plain 6-digit hex triple.
+    theme_accent: str = field(
+        default_factory=lambda: _env_color('THEME_ACCENT', '#0f766e'))
+    theme_accent_strong: str = field(
+        default_factory=lambda: _env_color('THEME_ACCENT_STRONG', '#0c5f59'))
+    # Filename inside static/uploads/, written by the admin logo upload.
+    portal_logo: str = field(
+        default_factory=lambda: os.getenv('PORTAL_LOGO', '').strip())
+    portal_footer_text: str = field(
+        default_factory=lambda: os.getenv('PORTAL_FOOTER_TEXT', '').strip())
     dashboard_refresh_seconds: int = field(
         default_factory=lambda: _env_int('DASHBOARD_REFRESH_SECONDS', 10))
     default_download_kbps: int = field(default_factory=lambda: _env_int('DEFAULT_DOWNLOAD_KBPS', 2048))

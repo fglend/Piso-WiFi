@@ -569,3 +569,125 @@ def test_revenue_adjustment_reduces_summary(user_manager):
     assert 'adjustment' in sources
     assert user_manager.record_revenue_adjustment(0) is False
     assert user_manager.record_revenue_adjustment(-5) is False
+
+
+# --- sales reporting ---------------------------------------------------------
+
+def _today():
+    return dt.date.today().isoformat()
+
+
+def _insert_transaction_at(user_manager, amount, minutes, timestamp):
+    """Insert a transaction at an explicit UTC timestamp.
+
+    add_time() always stamps CURRENT_TIMESTAMP, so proving that a range
+    excludes older rows needs a direct write.
+    """
+    conn = user_manager._connect()
+    try:
+        conn.execute(
+            'INSERT INTO transactions (user_id, amount, minutes, source, created_at) '
+            "VALUES (NULL, ?, ?, 'cash', ?)", (amount, minutes, timestamp))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_sales_report_totals_reconcile_with_buckets(user_manager):
+    user_manager.add_time(MAC, 5, 25)
+    user_manager.add_time(OTHER_MAC, 10, 50)
+
+    report = user_manager.get_sales_report(_today(), _today(), 'day')
+
+    assert report['totals']['gross'] == 15.0
+    assert report['totals']['net'] == 15.0
+    assert report['totals']['count'] == 2
+    assert report['totals']['minutes'] == 75
+    # The screen renders buckets; the totals row must be their sum exactly.
+    assert sum(b['net'] for b in report['buckets']) == report['totals']['net']
+    assert sum(b['count'] for b in report['buckets']) == report['totals']['count']
+
+
+def test_sales_report_excludes_rows_outside_the_range(user_manager):
+    user_manager.add_time(MAC, 5, 25)
+    _insert_transaction_at(user_manager, 999.0, 9999, '2020-01-01 00:00:00')
+
+    report = user_manager.get_sales_report(_today(), _today(), 'day')
+
+    assert report['totals']['gross'] == 5.0
+    assert report['totals']['count'] == 1
+
+
+def test_sales_report_nets_out_adjustments(user_manager):
+    user_manager.add_time(MAC, 20, 100)
+    user_manager.record_revenue_adjustment(8)
+
+    report = user_manager.get_sales_report(_today(), _today(), 'day')
+
+    assert report['totals']['gross'] == 20.0
+    assert report['totals']['adjustments'] == 8.0
+    assert report['totals']['net'] == 12.0
+
+
+def test_sales_report_can_go_negative_when_corrections_exceed_takings(user_manager):
+    user_manager.add_time(MAC, 5, 25)
+    user_manager.record_revenue_adjustment(20)
+
+    report = user_manager.get_sales_report(_today(), _today(), 'day')
+
+    # Clamping here would hide an over-correction from the operator.
+    assert report['totals']['net'] == -15.0
+
+
+def test_sales_report_breaks_down_by_source(user_manager):
+    user_manager.add_time(MAC, 5, 25)
+    user_manager.record_revenue_adjustment(2)
+
+    report = user_manager.get_sales_report(_today(), _today(), 'day')
+    by_source = {row['source']: row for row in report['by_source']}
+
+    assert by_source['cash']['net'] == 5.0
+    assert by_source['adjustment']['net'] == -2.0
+
+
+def test_sales_report_rejects_an_unknown_grouping(user_manager):
+    user_manager.add_time(MAC, 5, 25)
+
+    # An unknown group_by must fall back to 'day', never reach the SQL.
+    report = user_manager.get_sales_report(
+        _today(), _today(), "day'; DROP TABLE transactions; --")
+
+    assert report['totals']['gross'] == 5.0
+    assert len(report['buckets']) == 1
+
+
+def test_sales_report_is_empty_for_a_range_with_no_sales(user_manager):
+    user_manager.add_time(MAC, 5, 25)
+
+    report = user_manager.get_sales_report('2020-01-01', '2020-01-31', 'day')
+
+    assert report['buckets'] == []
+    assert report['totals']['net'] == 0.0
+
+
+def test_transactions_between_returns_exactly_the_aggregated_rows(user_manager):
+    user_manager.add_time(MAC, 5, 25)
+    user_manager.add_time(OTHER_MAC, 10, 50)
+    _insert_transaction_at(user_manager, 999.0, 9999, '2020-01-01 00:00:00')
+
+    rows = user_manager.get_transactions_between(_today(), _today())
+    report = user_manager.get_sales_report(_today(), _today(), 'day')
+
+    assert len(rows) == report['totals']['count'] == 2
+    # The CSV total must match what the operator saw on screen.
+    assert sum(row['amount'] for row in rows) == report['totals']['net']
+    assert all(row['created_at'].startswith(dt.date.today().isoformat())
+               for row in rows)
+
+
+def test_transactions_between_honours_its_limit(user_manager):
+    for _ in range(5):
+        user_manager.add_time(MAC, 1, 5)
+
+    assert len(user_manager.get_transactions_between(
+        _today(), _today(), limit=3)) == 3

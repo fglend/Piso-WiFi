@@ -5,11 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PISO WIFI - {% block title %}{% endblock %}</title>
     <link rel="stylesheet" href="{{ static_url('app.css') }}">
+    {% include "_theme.html" %}
 </head>
 <body>
     <header class="topbar">
         <div class="topbar-inner">
-            <a class="brand" href="/"><span class="brand-dot"></span>PISO WIFI</a>
+            <a class="brand" href="/">
+                {% if theme.logo %}
+                <img class="brand-logo"
+                     src="{{ url_for('static', filename='uploads/' ~ theme.logo) }}"
+                     alt="">
+                {% else %}
+                <span class="brand-dot"></span>
+                {% endif %}PISO WIFI</a>
             <nav class="topbar-nav">
                 {% if session.get('is_admin') %}
                     <a href="{{ url_for('admin.dashboard') }}"
@@ -22,6 +30,8 @@
                        {% if request.endpoint == 'admin.vouchers' %}class="active"{% endif %}>Vouchers</a>
                     <a href="{{ url_for('admin.transactions') }}"
                        {% if request.endpoint == 'admin.transactions' %}class="active"{% endif %}>Transactions</a>
+                    <a href="{{ url_for('admin.sales_report') }}"
+                       {% if request.endpoint in ('admin.sales_report', 'admin.export_sales_csv') %}class="active"{% endif %}>Reports</a>
                     <a href="{{ url_for('admin.update_settings') }}"
                        {% if request.endpoint == 'admin.update_settings' %}class="active"{% endif %}>Settings</a>
                     <a href="{{ url_for('portal.logout') }}">Logout</a>

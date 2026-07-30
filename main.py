@@ -57,6 +57,19 @@ def create_app(services=None, start_time_manager=True, manage_hardware=True, set
             return url_for('static', filename=filename, v=version)
         return {'static_url': static_url}
 
+    @app.context_processor
+    def inject_theme():
+        # Every template needs the operator's branding, and both base layouts
+        # render it, so this is a context processor rather than a per-route
+        # kwarg that each new view would have to remember to pass.
+        current = app.extensions['piso'].settings
+        return {'theme': {
+            'accent': current.theme_accent,
+            'accent_strong': current.theme_accent_strong,
+            'logo': current.portal_logo,
+            'footer_text': current.portal_footer_text,
+        }}
+
     @app.after_request
     def set_security_headers(response):
         response.headers['X-Content-Type-Options'] = 'nosniff'

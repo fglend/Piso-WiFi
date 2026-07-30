@@ -1,0 +1,16 @@
+{# Operator branding, applied by overriding the design-system custom
+   properties defined in static/app.css. Included from both base layouts.
+
+   Only emitted when the accent differs from the shipped default, so the
+   common case costs nothing. The values reach here already validated as
+   #rrggbb by config.is_valid_color - both on load from .env and on every
+   read back out of app_settings - so they cannot break out of the
+   declaration. #}
+{% if theme.accent != '#0f766e' or theme.accent_strong != '#0c5f59' %}
+<style>
+  :root {
+    --accent: {{ theme.accent }};
+    --accent-strong: {{ theme.accent_strong }};
+  }
+</style>
+{% endif %}

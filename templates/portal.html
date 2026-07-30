@@ -43,20 +43,57 @@
 {% endif %}
 
 {% if device %}
-    <div class="portal-header">
-        <div>
-            <div class="metric-label">Connected device</div>
-            <h1 class="mb-0">{{ portal_title }}</h1>
-            <div class="muted small text-break">{{ device.mac_address }}</div>
+    {# Hero status card: the one thing a customer opens the portal to see.
+       The countdown ticks client-side from the server-rendered balance so the
+       number feels live without polling the Pi once a second per phone. #}
+    <section class="hero-status{% if device.paused %} is-paused{% elif device.time_balance <= 0 %} is-empty{% endif %}"
+             aria-labelledby="hero-title">
+        <div class="hero-top">
+            <div>
+                <div class="metric-label">{{ portal_title }}</div>
+                <h1 class="hero-heading" id="hero-title">
+                    {% if device.paused %}Time paused
+                    {% elif device.time_balance <= 0 %}No time left
+                    {% else %}You're online{% endif %}
+                </h1>
+            </div>
+            {% if device.paused %}
+                <span class="badge badge-warn">Paused</span>
+            {% elif device.time_balance <= 0 %}
+                <span class="badge badge-danger">No access</span>
+            {% else %}
+                <span class="badge badge-ok">Active</span>
+            {% endif %}
         </div>
-        {% if device.paused %}
-            <span class="badge badge-warn">Time paused</span>
+
+        <div class="hero-clock" aria-live="polite">
+            <span id="balance-minutes"
+                  data-live-countdown="{{ '%.4f'|format(device.time_balance) }}"
+                  data-countdown-running="{{ '0' if device.paused or device.time_balance <= 0 else '1' }}"
+                  >{{ '%.1f'|format(device.time_balance) }}</span>
+            <span class="hero-clock-unit">min left</span>
+        </div>
+        {% if device.expires_at %}
+        <div class="hero-note">Pass valid until {{ device.expires_at }}</div>
         {% elif device.time_balance <= 0 %}
-            <span class="badge badge-danger">No internet access</span>
-        {% else %}
-            <span class="badge badge-ok">Internet active</span>
+        <div class="hero-note">Insert a coin or redeem a voucher below to get online.</div>
         {% endif %}
-    </div>
+
+        <dl class="hero-facts">
+            <div>
+                <dt>Plan</dt>
+                <dd>{% if device.plan == 'premium' %}Premium{% else %}Default{% endif %}</dd>
+            </div>
+            <div>
+                <dt>Speed</dt>
+                <dd>{{ '%g'|format(device.download_limit / 1000) }} / {{ '%g'|format(device.upload_limit / 1000) }} Mbps</dd>
+            </div>
+            <div>
+                <dt>Device</dt>
+                <dd class="text-break">{{ device.mac_address }}</dd>
+            </div>
+        </dl>
+    </section>
 
     {# Resume always renders when paused, even after the operator turns pausing
        off, so nobody is ever stranded with a frozen balance and no internet. #}
@@ -97,35 +134,30 @@
     </div>
     {% endif %}
 
-    <div class="grid grid-3 mb-4">
-        <div class="metric metric-hero">
-            <div class="metric-label">Time balance</div>
-            <div class="metric-value" id="balance-minutes">{{ '%.1f'|format(device.time_balance) }}</div>
-            {% if device.expires_at %}
-            <div class="muted small">minutes &mdash; pass valid until<br>{{ device.expires_at }}</div>
-            {% else %}
-            <div class="muted small">minutes remaining</div>
+    <section class="card mb-4" aria-labelledby="price-title">
+        <div class="card-head">
+            <h2 class="mb-0" id="price-title">Price List</h2>
+            {% if not rates %}
+            <span class="badge badge-muted">{{ '%g'|format(coin_minutes_per_peso) }} min per ₱1</span>
             {% endif %}
         </div>
-        <div class="metric">
-            <div class="metric-label">Plan</div>
-            <div class="metric-value">{% if device.plan == 'premium' %}Premium{% else %}Default{% endif %}</div>
-            <div class="muted small">{{ '%g'|format(device.download_limit / 1000) }} Mbps down / {{ '%g'|format(device.upload_limit / 1000) }} Mbps up</div>
-        </div>
-        <div class="metric">
-            <div class="metric-label">Price list</div>
+        <div class="card-body">
             {% if rates %}
-            <dl class="kv small">
+            <ul class="price-list">
                 {% for rate in rates %}
-                <div><dt>₱{{ rate.pesos }}</dt><dd>{{ rate.label }}</dd></div>
+                <li>
+                    <span class="price-amount">₱{{ rate.pesos }}</span>
+                    <span class="price-label">{{ rate.label }}</span>
+                </li>
                 {% endfor %}
-            </dl>
+            </ul>
             {% else %}
-            <div class="metric-value">{{ '%g'|format(coin_minutes_per_peso) }}</div>
-            <div class="muted small">minutes per peso</div>
+            <p class="muted mb-0">
+                Every ₱1 buys {{ '%g'|format(coin_minutes_per_peso) }} minute(s).
+            </p>
             {% endif %}
         </div>
-    </div>
+    </section>
 
     <div class="flash flash-info" role="note">
         <strong>Keep your remaining time.</strong>
@@ -333,6 +365,46 @@
     </div>
 {% endif %}
 
+{% if device %}
+<script>
+// Cosmetic countdown. The server is authoritative and deducts on its own
+// interval; this only stops the number looking frozen between reloads, and
+// reloads once it reaches zero so the real state takes over.
+(function () {
+    var element = document.getElementById('balance-minutes');
+    if (!element || !element.dataset.liveCountdown) return;
+    var minutes = parseFloat(element.dataset.liveCountdown) || 0;
+    var running = element.dataset.countdownRunning === '1';
+    var startedAt = Date.now();
+    var reloading = false;
+
+    function render() {
+        if (!running) return;
+        var left = Math.max(0, minutes - (Date.now() - startedAt) / 60000);
+        element.textContent = left.toFixed(1);
+        if (left <= 0 && !reloading) {
+            reloading = true;
+            running = false;
+            // Give the server's own deduction pass time to land first.
+            window.setTimeout(function () { window.location.reload(); }, 2000);
+        }
+    }
+
+    // The coin poller credits minutes mid-session; re-seed instead of letting
+    // the two writers fight over the same element.
+    window.pisoSetBalance = function (value) {
+        minutes = Number(value) || 0;
+        startedAt = Date.now();
+        running = minutes > 0;
+        reloading = false;
+        element.textContent = minutes.toFixed(1);
+    };
+
+    window.setInterval(render, 1000);
+    render();
+})();
+</script>
+{% endif %}
 {% if device and coinslot_enabled %}
 <script>
 (function () {
@@ -454,7 +526,11 @@
         });
         pesosInserted.textContent = pesoText;
         minutesAdded.textContent = minuteText;
-        balance.textContent = Number(status.balance || 0).toFixed(1);
+        if (window.pisoSetBalance) {
+            window.pisoSetBalance(status.balance);
+        } else {
+            balance.textContent = Number(status.balance || 0).toFixed(1);
+        }
 
         // Modal: the highlighted live view of the session.
         modalTitle.textContent = pesos > 0 ? 'Coin detected!' : 'Insert coins now';
