@@ -836,3 +836,271 @@ def test_portal_without_posts_shows_the_plain_banner(client):
 
     assert b'pa-banner is-plain' in body
     assert b'sheet-post-0' not in body
+
+
+# --- per-device pause permission ---------------------------------------------
+
+def _redeem_pausable_pass(services, mac=MAC, days=30):
+    """A duration pass sold with pausing allowed - the mistake being corrected."""
+    code = services.user_manager.create_voucher(
+        days * 1440, duration_days=days, pausable=True)
+    services.user_manager.redeem_voucher(code, mac)
+    return code
+
+
+def test_admin_can_revoke_pausing_on_an_already_redeemed_pass(
+        admin_client, csrf_token, services):
+    _redeem_pausable_pass(services)
+    assert services.user_manager.is_pausable(MAC) is True
+
+    resp = post(admin_client, '/admin/set_pausable', csrf_token,
+                mac_address=MAC, pausable='0')
+
+    assert resp.status_code == 302
+    assert services.user_manager.is_pausable(MAC) is False
+
+
+def test_revoking_pausing_actually_blocks_the_portal_pause(
+        admin_client, client, csrf_token, services):
+    services.settings.allow_manual_pause = True
+    _redeem_pausable_pass(services)
+
+    post(admin_client, '/admin/set_pausable', csrf_token,
+         mac_address=MAC, pausable='0')
+    # admin_client is the same client with a session flag; while it is set,
+    # GET / redirects to the dashboard and any portal assertion passes for the
+    # wrong reason.
+    client.get('/logout')
+
+    # Not just a hidden button - the portal route must refuse it too.
+    portal = client.get('/')
+    assert portal.status_code == 200
+    assert b'Pause my time' not in portal.data
+    post(client, '/pause', csrf_token)
+    assert services.user_manager.is_paused(MAC) is False
+
+
+def test_admin_can_restore_pausing(admin_client, csrf_token, services):
+    _redeem_pausable_pass(services)
+    post(admin_client, '/admin/set_pausable', csrf_token,
+         mac_address=MAC, pausable='0')
+
+    post(admin_client, '/admin/set_pausable', csrf_token,
+         mac_address=MAC, pausable='1')
+
+    assert services.user_manager.is_pausable(MAC) is True
+
+
+def test_revoking_does_not_resume_a_device_already_paused(
+        admin_client, csrf_token, services):
+    _redeem_pausable_pass(services)
+    services.user_manager.set_paused(MAC, True)
+
+    post(admin_client, '/admin/set_pausable', csrf_token,
+         mac_address=MAC, pausable='0')
+
+    # Auto-resuming would restart the customer's clock without warning.
+    assert services.user_manager.is_paused(MAC) is True
+    assert services.user_manager.is_pausable(MAC) is False
+
+
+def test_paused_device_can_still_resume_after_pausing_is_revoked(
+        admin_client, client, csrf_token, services):
+    _redeem_pausable_pass(services)
+    services.user_manager.set_paused(MAC, True)
+    post(admin_client, '/admin/set_pausable', csrf_token,
+         mac_address=MAC, pausable='0')
+    client.get('/logout')
+
+    assert b'Resume my time' in client.get('/').data
+    post(client, '/resume', csrf_token)
+
+    # Nobody may be stranded with a frozen balance and no internet.
+    assert services.user_manager.is_paused(MAC) is False
+
+
+def test_set_pausable_rejects_an_invalid_mac(admin_client, csrf_token, services):
+    _redeem_pausable_pass(services)
+
+    post(admin_client, '/admin/set_pausable', csrf_token,
+         mac_address='00:11; not-a-mac', pausable='0')
+
+    assert services.user_manager.is_pausable(MAC) is True
+
+
+def test_set_pausable_reports_an_unknown_device(admin_client, csrf_token, services):
+    resp = post(admin_client, '/admin/set_pausable', csrf_token,
+                mac_address=OTHER_MAC, pausable='0')
+
+    assert resp.status_code == 302
+    assert services.user_manager.set_pausable(OTHER_MAC, False) is False
+
+
+def test_set_pausable_requires_login(client, csrf_token, services):
+    _redeem_pausable_pass(services)
+
+    post(client, '/admin/set_pausable', csrf_token,
+         mac_address=MAC, pausable='0')
+
+    assert services.user_manager.is_pausable(MAC) is True
+
+
+def test_balance_tab_offers_the_toggle_and_flags_disabled_passes(
+        admin_client, csrf_token, services):
+    _redeem_pausable_pass(services)
+    assert b'Disable Pausing' in admin_client.get('/admin').data
+
+    post(admin_client, '/admin/set_pausable', csrf_token,
+         mac_address=MAC, pausable='0')
+
+    body = admin_client.get('/admin').data
+    assert b'Allow Pausing' in body
+    assert b'pausing disabled' in body
+
+
+# --- voucher-level pause permission ------------------------------------------
+
+def test_disabling_pause_on_an_unredeemed_voucher_applies_at_redemption(
+        admin_client, csrf_token, services):
+    code = services.user_manager.create_voucher(
+        30 * 1440, duration_days=30, pausable=True)
+
+    post(admin_client, '/vouchers/pausable', csrf_token, code=code, pausable='0')
+    services.user_manager.redeem_voucher(code, MAC)
+
+    # grant_duration() copies the voucher flag onto the user at redemption.
+    assert services.user_manager.is_pausable(MAC) is False
+
+
+def test_disabling_pause_on_a_redeemed_voucher_cascades_to_the_device(
+        admin_client, csrf_token, services):
+    code = services.user_manager.create_voucher(
+        30 * 1440, duration_days=30, pausable=True)
+    services.user_manager.redeem_voucher(code, MAC)
+    assert services.user_manager.is_pausable(MAC) is True
+
+    post(admin_client, '/vouchers/pausable', csrf_token, code=code, pausable='0')
+
+    # Fixing only the voucher row would be useless here: is_pausable() reads
+    # users.pausable, not vouchers.pausable.
+    assert services.user_manager.is_pausable(MAC) is False
+
+
+def test_cascade_actually_blocks_the_portal_pause(
+        admin_client, client, csrf_token, services):
+    services.settings.allow_manual_pause = True
+    code = services.user_manager.create_voucher(
+        30 * 1440, duration_days=30, pausable=True)
+    services.user_manager.redeem_voucher(code, MAC)
+
+    post(admin_client, '/vouchers/pausable', csrf_token, code=code, pausable='0')
+    client.get('/logout')
+
+    portal = client.get('/')
+    assert portal.status_code == 200
+    assert b'Pause my time' not in portal.data
+    post(client, '/pause', csrf_token)
+    assert services.user_manager.is_paused(MAC) is False
+
+
+def test_reallowing_pause_on_a_redeemed_voucher_cascades_back(
+        admin_client, csrf_token, services):
+    code = services.user_manager.create_voucher(
+        30 * 1440, duration_days=30, pausable=True)
+    services.user_manager.redeem_voucher(code, MAC)
+    post(admin_client, '/vouchers/pausable', csrf_token, code=code, pausable='0')
+
+    post(admin_client, '/vouchers/pausable', csrf_token, code=code, pausable='1')
+
+    assert services.user_manager.is_pausable(MAC) is True
+
+
+def test_voucher_pausable_leaves_other_devices_alone(
+        admin_client, csrf_token, services):
+    mine = services.user_manager.create_voucher(
+        30 * 1440, duration_days=30, pausable=True)
+    theirs = services.user_manager.create_voucher(
+        30 * 1440, duration_days=30, pausable=True)
+    services.user_manager.redeem_voucher(mine, MAC)
+    services.user_manager.redeem_voucher(theirs, OTHER_MAC)
+
+    post(admin_client, '/vouchers/pausable', csrf_token, code=mine, pausable='0')
+
+    assert services.user_manager.is_pausable(MAC) is False
+    assert services.user_manager.is_pausable(OTHER_MAC) is True
+
+
+def test_voucher_pausable_reports_an_unknown_code(admin_client, csrf_token, services):
+    resp = post(admin_client, '/vouchers/pausable', csrf_token,
+                code='NOPE-NOPE', pausable='0')
+
+    assert resp.status_code == 302
+    assert services.user_manager.set_voucher_pausable('NOPE-NOPE', False) == {
+        'found': False, 'cascaded_to': None}
+
+
+def test_voucher_pausable_requires_login(client, csrf_token, services):
+    code = services.user_manager.create_voucher(
+        30 * 1440, duration_days=30, pausable=True)
+    services.user_manager.redeem_voucher(code, MAC)
+
+    post(client, '/vouchers/pausable', csrf_token, code=code, pausable='0')
+
+    assert services.user_manager.is_pausable(MAC) is True
+
+
+def test_voucher_page_offers_the_toggle_for_duration_passes(
+        admin_client, csrf_token, services):
+    services.user_manager.create_voucher(30 * 1440, duration_days=30,
+                                         pausable=True)
+
+    body = admin_client.get('/vouchers').data
+    assert b'Disable Pause' in body
+
+    code = services.user_manager.get_vouchers()[0]['code']
+    post(admin_client, '/vouchers/pausable', csrf_token, code=code, pausable='0')
+
+    body = admin_client.get('/vouchers').data
+    assert b'Allow Pause' in body
+    assert b'No pause' in body
+
+
+def test_voucher_page_shows_no_toggle_for_minute_vouchers(admin_client, services):
+    services.user_manager.create_voucher(60)
+
+    body = admin_client.get('/vouchers').data
+
+    # Pause permission is meaningless on a plain minutes top-up.
+    assert b'Disable Pause' not in body
+    assert b'n/a' in body
+
+
+def test_redeemed_voucher_toggle_is_reachable_on_the_show_all_page(
+        admin_client, services):
+    code = services.user_manager.create_voucher(
+        30 * 1440, duration_days=30, pausable=True)
+    services.user_manager.redeem_voucher(code, MAC)
+
+    # The default view lists unredeemed codes only, so the control for a spent
+    # pass is only reachable via the Show all toggle.
+    assert code.encode() not in admin_client.get('/vouchers').data
+
+    body = admin_client.get('/vouchers?all=1').data
+    assert code.encode() in body
+    assert b'Disable Pause' in body
+
+
+def test_cascade_is_reported_to_the_operator(admin_client, csrf_token, services):
+    code = services.user_manager.create_voucher(
+        30 * 1440, duration_days=30, pausable=True)
+    services.user_manager.redeem_voucher(code, MAC)
+
+    resp = admin_client.post(
+        '/vouchers/pausable',
+        data={'csrf_token': csrf_token, 'code': code, 'pausable': '0'},
+        follow_redirects=True)
+
+    # The operator must be told the change reached a real customer, not just
+    # the voucher row.
+    assert b'Applied to the device that already redeemed it' in resp.data
+    assert MAC.encode() in resp.data

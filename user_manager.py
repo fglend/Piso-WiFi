@@ -728,6 +728,30 @@ class UserManager:
             out.result = bool(row['pausable']) if row else True
         return out.result
 
+    def set_pausable(self, mac_address, pausable):
+        """Override whether this device's current pass may be paused.
+
+        grant_duration() sets this at redemption from the voucher's own flag;
+        this is the after-the-fact correction for a pass that was sold with the
+        wrong setting. Returns False when the MAC is unknown, so the caller can
+        tell "no such device" apart from a successful change.
+
+        Revoking permission deliberately does NOT resume a device that is
+        already paused: that would hand out internet and restart the customer's
+        clock without warning. The portal keeps Resume reachable while paused
+        regardless of this flag, so nobody is stranded with a frozen balance.
+        """
+        with self._with_conn('Updating pausable flag',
+                             default=False) as (conn, out):
+            cursor = conn.execute(
+                'UPDATE users SET pausable = ? WHERE mac_address = ?',
+                (1 if pausable else 0, mac_address))
+            out.result = cursor.rowcount > 0
+        if out.result:
+            self.logger.info("Set pausable=%s for %s",
+                             bool(pausable), mac_address)
+        return out.result
+
     def transfer_balance(self, from_mac, to_mac):
         """Move a device's remaining time to another MAC.
 
@@ -889,6 +913,7 @@ class UserManager:
                              default=[]) as (conn, out):
             rows = conn.execute('''
                 SELECT u.mac_address, u.time_balance, u.plan, u.paused,
+                       u.pausable,
                        datetime(u.expires_at, 'localtime') AS expires_at,
                        dc.hostname, dc.ip_address,
                        datetime(dc.last_seen_at, 'localtime') AS last_seen_at
@@ -1060,6 +1085,40 @@ class UserManager:
             return {'minutes': row['minutes'], 'duration_days': None,
                     'expires_at': None}
         return None
+
+    def set_voucher_pausable(self, code, pausable):
+        """Correct the pause permission on an already-created voucher.
+
+        Returns {'found': bool, 'cascaded_to': mac or None}.
+
+        When the voucher has already been redeemed the change is pushed to the
+        device that redeemed it as well, in the same transaction. Fixing only
+        the voucher row would be useless there: grant_duration() copied the
+        flag onto the user at redemption, and users.pausable is what
+        is_pausable() actually reads.
+        """
+        with self._with_conn(
+                'Updating voucher pausable flag',
+                on_error=lambda: {'found': False, 'cascaded_to': None},
+        ) as (conn, out):
+            out.result = {'found': False, 'cascaded_to': None}
+            row = conn.execute(
+                'SELECT redeemed_by FROM vouchers WHERE code = ?',
+                (code,)).fetchone()
+            if row is not None:
+                flag = 1 if pausable else 0
+                conn.execute('UPDATE vouchers SET pausable = ? WHERE code = ?',
+                             (flag, code))
+                redeemed_by = row['redeemed_by']
+                if redeemed_by:
+                    conn.execute(
+                        'UPDATE users SET pausable = ? WHERE mac_address = ?',
+                        (flag, redeemed_by))
+                out.result = {'found': True, 'cascaded_to': redeemed_by}
+                self.logger.info(
+                    "Set voucher %s pausable=%s (device %s)",
+                    code, bool(pausable), redeemed_by or 'unredeemed')
+        return out.result
 
     def get_vouchers(self, include_redeemed=False):
         with self._with_conn('Listing vouchers', default=[]) as (conn, out):

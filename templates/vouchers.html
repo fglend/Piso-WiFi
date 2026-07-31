@@ -97,6 +97,7 @@
                     <th>Created</th>
                     <th>Redeemed By</th>
                     <th>Redeemed At</th>
+                    <th>Pause</th>
                 </tr>
             </thead>
             <tbody>
@@ -118,9 +119,32 @@
                     <td>{{ v.created_at }}</td>
                     <td class="text-break">{{ v.redeemed_by or '-' }}</td>
                     <td>{{ v.redeemed_at or '-' }}</td>
+                    <td>
+                        {# Only duration passes carry a pause permission;
+                           minute vouchers just top up a balance. #}
+                        {% if v.duration_days %}
+                        <form action="{{ url_for('admin.set_voucher_pausable') }}"
+                              method="POST" class="mb-0">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <input type="hidden" name="code" value="{{ v.code }}">
+                            {% if v.pausable %}
+                            <input type="hidden" name="pausable" value="0">
+                            <button type="submit" class="btn btn-warn btn-sm"
+                                    {% if v.redeemed_by %}title="Also applies to {{ v.redeemed_by }}, which already redeemed this code."{% endif %}>
+                                Disable Pause
+                            </button>
+                            {% else %}
+                            <input type="hidden" name="pausable" value="1">
+                            <button type="submit" class="btn btn-ghost btn-sm">Allow Pause</button>
+                            {% endif %}
+                        </form>
+                        {% else %}
+                        <span class="muted small">n/a</span>
+                        {% endif %}
+                    </td>
                 </tr>
                 {% else %}
-                <tr><td colspan="7" class="text-center muted">No vouchers</td></tr>
+                <tr><td colspan="8" class="text-center muted">No vouchers</td></tr>
                 {% endfor %}
             </tbody>
         </table>

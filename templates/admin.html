@@ -340,9 +340,33 @@
                         {% if device.paused %}
                         <div class="muted small">clock stopped by the customer</div>
                         {% endif %}
+                        {% if not device.pausable %}
+                        <div class="muted small">pausing disabled</div>
+                        {% endif %}
                     </td>
                     <td>{{ device.last_seen_at or '-' }}</td>
                     <td>
+                        <div class="stack">
+                        {# Explicit 1/0, not a checkbox: an unchecked box is
+                           absent from the POST body, which is the very mistake
+                           this control exists to correct. #}
+                        <form action="{{ url_for('admin.set_pausable') }}" method="POST" class="mb-0">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <input type="hidden" name="mac_address" value="{{ device.mac_address }}">
+                            {% if device.pausable %}
+                            <input type="hidden" name="pausable" value="0">
+                            <button type="submit" class="btn btn-warn btn-sm"
+                                    title="This pass was sold as pausable. Turn that off.">
+                                Disable Pausing
+                            </button>
+                            {% else %}
+                            <input type="hidden" name="pausable" value="1">
+                            <button type="submit" class="btn btn-ghost btn-sm">
+                                Allow Pausing
+                            </button>
+                            {% endif %}
+                        </form>
+
                         <form action="{{ url_for('admin.transfer_balance') }}" method="POST" class="form-row"
                               onsubmit="return confirm('Move {{ '%g'|format(device.time_balance) }} minute(s) from {{ device.mac_address }} to the MAC you entered?');">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -354,6 +378,7 @@
                                    style="max-width: 170px;" required>
                             <button type="submit" class="btn btn-ghost btn-sm">Transfer Time</button>
                         </form>
+                        </div>
                     </td>
                 </tr>
                 {% else %}

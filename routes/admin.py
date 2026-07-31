@@ -411,6 +411,67 @@ def transfer_balance():
     return redirect(url_for('admin.dashboard'))
 
 
+@admin_bp.route('/admin/set_pausable', methods=['POST'])
+@admin_required
+def set_pausable():
+    """Correct a pass that was sold with the wrong pause permission.
+
+    Submitted as an explicit 1/0 rather than a checkbox: an unchecked box is
+    simply absent from the POST body, and "absent" is exactly the mistake this
+    route exists to undo.
+    """
+    svc = _services()
+    mac = _form_mac()
+    if not mac:
+        return redirect(url_for('admin.dashboard'))
+
+    allowed = request.form.get('pausable') == '1'
+    if not svc.user_manager.set_pausable(mac, allowed):
+        flash(f'No device found for {mac}', 'error')
+        return redirect(url_for('admin.dashboard'))
+
+    if allowed:
+        flash(f'{mac} may pause their time again', 'success')
+    elif svc.user_manager.is_paused(mac):
+        # The flag governs new pauses only; an existing pause is left alone so
+        # the customer's clock is not restarted without warning.
+        flash(f'{mac} can no longer pause. They are paused right now - '
+              f'they keep their saved time and can still resume once.',
+              'warning')
+    else:
+        flash(f'{mac} can no longer pause their time', 'success')
+    logger.info("Admin set pausable=%s for %s", allowed, mac)
+    return redirect(url_for('admin.dashboard'))
+
+
+@admin_bp.route('/vouchers/pausable', methods=['POST'])
+@admin_required
+def set_voucher_pausable():
+    """Fix a duration pass created with the wrong pause permission.
+
+    Cascades to the redeeming device when the code is already spent, so the
+    operator does not have to remember to correct both places.
+    """
+    svc = _services()
+    code = _form_text('code', maximum=64)
+    if not code:
+        flash('Missing voucher code', 'error')
+        return redirect(url_for('admin.vouchers'))
+
+    allowed = request.form.get('pausable') == '1'
+    outcome = svc.user_manager.set_voucher_pausable(code, allowed)
+    verb = 'may pause' if allowed else 'cannot pause'
+
+    if not outcome['found']:
+        flash(f'No voucher found for {code}', 'error')
+    elif outcome['cascaded_to']:
+        flash(f'Voucher {code} {verb}. Applied to the device that already '
+              f'redeemed it ({outcome["cascaded_to"]}).', 'success')
+    else:
+        flash(f'Voucher {code} {verb} once redeemed', 'success')
+    return redirect(url_for('admin.vouchers'))
+
+
 @admin_bp.route('/set_bandwidth', methods=['POST'])
 @admin_required
 def set_bandwidth():
