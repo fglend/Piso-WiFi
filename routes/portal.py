@@ -69,7 +69,6 @@ def index():
         device=device,
         rates=rates,
         posts=posts,
-        sessions=svc.user_manager.get_device_sessions(mac) if mac else [],
         coinslot_enabled=svc.coinslot is not None,
         # A pass sold as non-pausable overrides the shop-wide setting
         pause_enabled=(svc.settings.allow_manual_pause
@@ -79,6 +78,24 @@ def index():
         portal_title=svc.settings.portal_title,
         portal_subtitle=svc.settings.portal_subtitle,
     )
+
+
+@portal_bp.route('/sessions')
+def sessions():
+    """This device's recent connection history, fetched when the sheet opens.
+
+    Deliberately not part of the portal render: it cost ~11% of every page
+    load to build markup that most customers never open, on a box that also
+    has to serve every other phone on the AP.
+
+    The MAC comes from the requesting IP, never from the client, so a device
+    can only ever read its own history.
+    """
+    svc = _services()
+    mac = _client_mac()
+    if not mac:
+        return jsonify({'sessions': []})
+    return jsonify({'sessions': svc.user_manager.get_device_sessions(mac)})
 
 
 @portal_bp.route('/<path:requested_path>', methods=['GET', 'HEAD'])

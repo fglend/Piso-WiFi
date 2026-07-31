@@ -29,29 +29,12 @@ class NetworkController:
         self.settings = settings
         self.ap_interface = settings.ap_interface
         self.internet_interface = settings.internet_interface
-        configured_ap_mac = getattr(
-            settings, 'poe_ap_mac_address', '').strip().upper()
-        configured_ap_ip = getattr(settings, 'poe_ap_ip_address', '').strip()
-        if settings.network_mode != 'wired':
-            configured_ap_mac = ''
-            configured_ap_ip = ''
-        if configured_ap_mac and not is_valid_mac(configured_ap_mac):
-            self.logger.error(
-                "Ignoring invalid POE_AP_MAC_ADDRESS: %r", configured_ap_mac)
-            configured_ap_mac = ''
-        try:
-            if configured_ap_ip:
-                configured_ap_ip = str(IPv4Address(configured_ap_ip))
-        except AddressValueError:
-            self.logger.error(
-                "Ignoring invalid POE_AP_IP_ADDRESS: %r", configured_ap_ip)
-            configured_ap_ip = ''
-        if not configured_ap_mac or not configured_ap_ip:
-            configured_ap_mac = ''
-            configured_ap_ip = ''
-        protected_devices = (
-            {configured_ap_mac: configured_ap_ip} if configured_ap_mac else {})
+        protected_devices = self._resolve_protected_devices(settings)
         self.trusted_macs = frozenset(protected_devices)
+        if protected_devices:
+            self.logger.info("Protected infrastructure: %s",
+                             ', '.join(f'{mac}={ip}' for mac, ip
+                                       in sorted(protected_devices.items())))
 
         backend = WiredGateway if settings.network_mode == 'wired' else APManager
         self.ap = backend(settings)
@@ -181,6 +164,39 @@ class NetworkController:
         except Exception as e:
             self.logger.error(f"Error getting connected devices: {e}")
             return [dict(device) for device in self._known_devices.values()]
+
+    def _resolve_protected_devices(self, settings):
+        """Infrastructure MAC -> reserved IP, never blocked or redirected.
+
+        A PoE switch feeding several APs is the same problem as one AP, just
+        with more rows, so this handles any number. Only meaningful in wired
+        mode: with the Pi's own radio there is no external AP to protect.
+
+        Entries are re-checked here even though config.validate() already
+        raised on bad ones, because tests and callers can build a Settings
+        object without going through validate(). A bad row is dropped with a
+        loud error rather than taking the gateway down at startup.
+        """
+        if settings.network_mode != 'wired':
+            return {}
+        try:
+            configured = settings.protected_device_map()
+        except Exception as exc:
+            self.logger.error("Ignoring PROTECTED_DEVICES: %s", exc)
+            return {}
+
+        devices = {}
+        for mac, ip in configured.items():
+            mac = mac.strip().upper()
+            if not is_valid_mac(mac):
+                self.logger.error("Ignoring protected device, bad MAC: %r", mac)
+                continue
+            try:
+                devices[mac] = str(IPv4Address(ip.strip()))
+            except (AddressValueError, AttributeError):
+                self.logger.error(
+                    "Ignoring protected device %s, bad IP: %r", mac, ip)
+        return devices
 
     def resolve_ip(self, mac_address):
         return self.ap.resolve_ip(mac_address)

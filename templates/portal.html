@@ -173,23 +173,14 @@
             <h2 id="sheet-sessions-title">Recent Sessions</h2>
             <button type="button" class="pa-sheet-close" data-sheet-close aria-label="Close">&times;</button>
         </div>
-        {% if sessions %}
-        <ul class="pa-list">
-            {% for entry in sessions %}
-            <li>
-                <div>
-                    <strong>{{ entry.connected_at }}</strong>
-                    <div class="muted small">
-                        {% if entry.disconnected_at %}until {{ entry.disconnected_at }}{% else %}still connected{% endif %}
-                    </div>
-                </div>
-                <span class="muted small">{{ entry.ip_address or '' }}</span>
-            </li>
-            {% endfor %}
-        </ul>
-        {% else %}
-        <p class="muted mb-0">No past sessions recorded for this device yet.</p>
-        {% endif %}
+        {# Filled on first open from /sessions. Building this list into every
+           portal render cost ~11% of the page for something most customers
+           never look at. #}
+        <ul class="pa-list" data-sessions-list hidden></ul>
+        <p class="muted mb-0" data-sessions-empty hidden>
+            No past sessions recorded for this device yet.
+        </p>
+        <p class="muted mb-0" data-sessions-loading>Loading&hellip;</p>
     </div>
 </div>
 
@@ -442,10 +433,60 @@
         if (focusable) focusable.focus();
     }
 
+    // Session history is fetched the first time the sheet is opened, then
+    // kept - it does not change while the page is up.
+    var sessionsLoaded = false;
+
+    function loadSessions() {
+        if (sessionsLoaded) return;
+        sessionsLoaded = true;
+        var list = document.querySelector('[data-sessions-list]');
+        var empty = document.querySelector('[data-sessions-empty]');
+        var loading = document.querySelector('[data-sessions-loading]');
+        if (!list) return;
+
+        fetch('{{ url_for('portal.sessions') }}',
+              {headers: {'Accept': 'application/json'}})
+            .then(function (response) { return response.json(); })
+            .then(function (data) {
+                var entries = (data && data.sessions) || [];
+                if (loading) loading.hidden = true;
+                if (!entries.length) {
+                    if (empty) empty.hidden = false;
+                    return;
+                }
+                entries.forEach(function (entry) {
+                    var row = document.createElement('li');
+                    var left = document.createElement('div');
+                    var when = document.createElement('strong');
+                    when.textContent = entry.connected_at;
+                    var sub = document.createElement('div');
+                    sub.className = 'muted small';
+                    sub.textContent = entry.disconnected_at
+                        ? 'until ' + entry.disconnected_at : 'still connected';
+                    left.appendChild(when);
+                    left.appendChild(sub);
+                    var ip = document.createElement('span');
+                    ip.className = 'muted small';
+                    ip.textContent = entry.ip_address || '';
+                    row.appendChild(left);
+                    row.appendChild(ip);
+                    list.appendChild(row);
+                });
+                list.hidden = false;
+            })
+            .catch(function () {
+                sessionsLoaded = false;   // let the next open retry
+                if (loading) loading.textContent = 'Could not load sessions.';
+            });
+    }
+
     document.addEventListener('click', function (event) {
         var opener = event.target.closest('[data-sheet]');
         if (opener) {
-            open(opener.getAttribute('data-sheet'));
+            var id = opener.getAttribute('data-sheet');
+            if (id === 'sheet-sessions') loadSessions();
+            open(id);
             return;
         }
         if (event.target.closest('[data-sheet-close]')) close();

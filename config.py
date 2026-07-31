@@ -32,6 +32,36 @@ def _env_float(name, default):
         return float(default)
 
 
+def _parse_protected_devices(spec):
+    """Parse 'MAC=IP,MAC=IP' into {MAC_UPPER: IP}.
+
+    Raises RuntimeError naming the offending entry. Infrastructure that is
+    silently dropped from this map gets blocked by the firewall's terminal
+    DROP, so a malformed entry must stop startup, not be skipped.
+    """
+    devices = {}
+    for raw in (spec or '').split(','):
+        entry = raw.strip()
+        if not entry:
+            continue
+        mac, separator, ip = entry.partition('=')
+        mac, ip = mac.strip().upper(), ip.strip()
+        if not separator or not mac or not ip:
+            raise RuntimeError(
+                'Invalid configuration: PROTECTED_DEVICES entries must look '
+                f'like MAC=IP (got {entry!r})')
+        if not _MAC_ADDRESS_RE.fullmatch(mac):
+            raise RuntimeError(
+                'Invalid configuration: PROTECTED_DEVICES contains an invalid '
+                f'MAC address {mac!r}')
+        if mac in devices:
+            raise RuntimeError(
+                'Invalid configuration: PROTECTED_DEVICES lists '
+                f'{mac} more than once')
+        devices[mac] = ip
+    return devices
+
+
 def is_valid_color(value):
     """True for a plain #rrggbb triple. Anything else is refused rather than
     sanitised: these values are written straight into a <style> block."""
@@ -126,6 +156,11 @@ class Settings:
             'POE_AP_MAC_ADDRESS', '').strip().upper())
     poe_ap_ip_address: str = field(
         default_factory=lambda: os.getenv('POE_AP_IP_ADDRESS', '').strip())
+    # Additional infrastructure devices for a multi-AP build (PoE switch plus
+    # two or more APs): 'MAC=IP,MAC=IP'. Merged with the POE_AP_* pair above,
+    # which stays supported so a single-AP .env needs no edit.
+    protected_devices_spec: str = field(
+        default_factory=lambda: os.getenv('PROTECTED_DEVICES', '').strip())
     ap_ssid: str = field(default_factory=lambda: os.getenv('AP_SSID', 'PisoWiFi'))
     ap_password: str = field(default_factory=lambda: os.getenv('AP_PASSWORD', 'pisowifi123'))
     ap_ip: str = field(default_factory=lambda: os.getenv('AP_IP', '192.168.4.1'))
@@ -197,6 +232,12 @@ class Settings:
             raise RuntimeError(
                 'Invalid configuration: POE_AP_MAC_ADDRESS and '
                 'POE_AP_IP_ADDRESS must be set together')
+        # Every extra infrastructure device gets the same checks. A typo here
+        # means an AP or switch is treated as an unpaid client and blocked, so
+        # this fails loudly at startup rather than being skipped.
+        for mac, ip in _parse_protected_devices(
+                self.protected_devices_spec).items():
+            self._validate_protected_address(mac, ip)
         if poe_ap_ip:
             try:
                 management_ip = IPv4Address(poe_ap_ip)
@@ -216,12 +257,55 @@ class Settings:
                 raise RuntimeError(
                     'Invalid configuration: POE_AP_IP_ADDRESS must be outside '
                     'the DHCP range')
+        self._validate_coinslot_pins()
+        return self._validate_credentials()
+
+    def _validate_protected_address(self, mac, ip):
+        """Same rules the single PoE AP has always had, applied per device."""
+        try:
+            management_ip = IPv4Address(ip)
+            lan_network = IPv4Network(
+                f'{self.ap_ip}/{self.network_mask}', strict=False)
+            dhcp_start = IPv4Address(self.dhcp_range_start)
+            dhcp_end = IPv4Address(self.dhcp_range_end)
+        except (AddressValueError, ValueError):
+            raise RuntimeError(
+                f'Invalid configuration: PROTECTED_DEVICES entry {mac} has an '
+                f'invalid IPv4 address {ip!r}')
+        if management_ip not in lan_network or str(management_ip) == self.ap_ip:
+            raise RuntimeError(
+                f'Invalid configuration: PROTECTED_DEVICES entry {mac} must '
+                'use a reserved address on the client LAN, not AP_IP')
+        if dhcp_start <= management_ip <= dhcp_end:
+            raise RuntimeError(
+                f'Invalid configuration: PROTECTED_DEVICES entry {mac} must '
+                'use an address outside the DHCP range')
+
+    def protected_device_map(self):
+        """MAC -> reserved IP for every infrastructure device.
+
+        One PoE AP, or a switch plus several APs: the firewall keeps these
+        permanently allowed and never captive-redirects them. The legacy
+        POE_AP_* pair is folded in first so an existing single-AP .env keeps
+        working with no edit; PROTECTED_DEVICES wins on a duplicate MAC.
+        """
+        devices = {}
+        mac = self.poe_ap_mac_address.strip().upper()
+        ip = self.poe_ap_ip_address.strip()
+        if mac and ip:
+            devices[mac] = ip
+        devices.update(_parse_protected_devices(self.protected_devices_spec))
+        return devices
+
+    def _validate_coinslot_pins(self):
         if self.coinslot_enabled and self.coinslot_gpio == self.coinslot_relay_gpio:
             raise RuntimeError(
                 'Invalid configuration: COINSLOT_GPIO and COINSLOT_RELAY_GPIO '
                 'must be different pins (both are '
                 f'{self.coinslot_gpio}). The pulse input and relay output '
                 'cannot share one GPIO.')
+
+    def _validate_credentials(self):
         problems = []
         if self.is_production:
             if self.secret_key in _INSECURE_DEFAULTS:

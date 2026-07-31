@@ -730,18 +730,50 @@ def test_portal_shows_connected_pill_with_balance(client, services):
     assert b'Time Remaining' in body
 
 
-def test_portal_sessions_sheet_lists_history(client, services):
+def test_sessions_endpoint_returns_this_devices_history(client, services):
+    services.user_manager.sync_connection_snapshot(
+        [{'mac_address': MAC, 'ip': '192.168.4.7', 'hostname': 'phone'}])
+
+    payload = client.get('/sessions').get_json()
+
+    assert len(payload['sessions']) == 1
+    assert payload['sessions'][0]['ip_address'] == '192.168.4.7'
+    # An open session has no end yet.
+    assert payload['sessions'][0]['disconnected_at'] is None
+
+
+def test_sessions_endpoint_is_empty_without_history(client):
+    assert client.get('/sessions').get_json() == {'sessions': []}
+
+
+def test_sessions_are_not_built_into_every_portal_render(client, services):
+    """The list is fetched when the sheet opens, not on every page load.
+
+    Rendering it inline cost ~11% of the portal render for something most
+    customers never open, on a box also serving every other phone.
+    """
     services.user_manager.sync_connection_snapshot(
         [{'mac_address': MAC, 'ip': '192.168.4.7', 'hostname': 'phone'}])
 
     body = client.get('/').data
 
-    assert b'Recent Sessions' in body
-    assert b'192.168.4.7' in body
+    assert b'Recent Sessions' in body          # the sheet still exists
+    assert b'192.168.4.7' not in body          # but its rows do not
+    assert b'data-sessions-list' in body
 
 
-def test_portal_sessions_sheet_handles_no_history(client):
-    assert b'No past sessions recorded' in client.get('/').data
+def test_sessions_endpoint_only_ever_returns_the_callers_own_history(
+        client, services):
+    services.user_manager.sync_connection_snapshot([
+        {'mac_address': MAC, 'ip': '192.168.4.7', 'hostname': 'mine'},
+        {'mac_address': OTHER_MAC, 'ip': '192.168.4.9', 'hostname': 'theirs'},
+    ])
+
+    payload = client.get('/sessions').get_json()
+
+    # The MAC comes from the requesting IP, never from the client.
+    addresses = [row['ip_address'] for row in payload['sessions']]
+    assert addresses == ['192.168.4.7']
 
 
 # --- coin slot markup (fixtures default to coinslot=None, so force it on) ----

@@ -632,3 +632,119 @@ def test_qos_setup_creates_game_lane():
                for c in commands)
     assert any('fw' in c and '0x67' in c and f'1:{GAME_CLASS_ID}' in c
                for c in commands)
+
+
+# --- multi-AP readiness (PoE switch feeding several APs) ---------------------
+
+SECOND_AP_MAC = "AA:BB:CC:DD:EE:02"
+SECOND_AP_IP = "192.168.4.3"
+SWITCH_MAC = "AA:BB:CC:DD:EE:03"
+SWITCH_IP = "192.168.4.4"
+
+
+def test_legacy_single_poe_ap_still_works(settings):
+    """An existing single-AP .env must keep working with no edit."""
+    settings.network_mode = 'wired'
+    settings.poe_ap_mac_address = POE_AP_MAC
+    settings.poe_ap_ip_address = POE_AP_IP
+
+    assert settings.protected_device_map() == {POE_AP_MAC: POE_AP_IP}
+
+
+def test_protected_devices_spec_adds_more_infrastructure(settings):
+    settings.poe_ap_mac_address = POE_AP_MAC
+    settings.poe_ap_ip_address = POE_AP_IP
+    settings.protected_devices_spec = (
+        f'{SECOND_AP_MAC}={SECOND_AP_IP},{SWITCH_MAC}={SWITCH_IP}')
+
+    assert settings.protected_device_map() == {
+        POE_AP_MAC: POE_AP_IP,
+        SECOND_AP_MAC: SECOND_AP_IP,
+        SWITCH_MAC: SWITCH_IP,
+    }
+
+
+def test_protected_devices_works_without_the_legacy_pair(settings):
+    settings.protected_devices_spec = f'{SECOND_AP_MAC}={SECOND_AP_IP}'
+
+    assert settings.protected_device_map() == {SECOND_AP_MAC: SECOND_AP_IP}
+
+
+def test_protected_devices_is_case_insensitive_and_tolerates_spacing(settings):
+    settings.protected_devices_spec = (
+        f'  {SECOND_AP_MAC.lower()} = {SECOND_AP_IP} , ')
+
+    assert settings.protected_device_map() == {SECOND_AP_MAC: SECOND_AP_IP}
+
+
+@pytest.mark.parametrize('spec', [
+    'not-a-mac=192.168.4.3',
+    f'{SECOND_AP_MAC}',                      # missing =IP
+    f'{SECOND_AP_MAC}=',                     # missing IP
+    f'{SECOND_AP_MAC}={SECOND_AP_IP},{SECOND_AP_MAC}={SWITCH_IP}',  # duplicate
+])
+def test_malformed_protected_devices_refuse_to_start(settings, spec):
+    settings.protected_devices_spec = spec
+
+    # Silently dropping an AP would leave it blocked by the terminal DROP,
+    # which looks like a hardware fault. Fail loudly instead.
+    with pytest.raises(RuntimeError):
+        settings.validate()
+
+
+@pytest.mark.parametrize('bad_ip', [
+    '10.0.0.5',        # off the client LAN
+    '192.168.4.1',     # AP_IP itself
+    '192.168.4.10',    # inside the DHCP range
+])
+def test_protected_device_ip_gets_the_same_checks_as_the_poe_ap(settings, bad_ip):
+    settings.ap_ip = '192.168.4.1'
+    settings.network_mask = '255.255.255.0'
+    settings.dhcp_range_start = '192.168.4.10'
+    settings.dhcp_range_end = '192.168.4.200'
+    settings.protected_devices_spec = f'{SECOND_AP_MAC}={bad_ip}'
+
+    with pytest.raises(RuntimeError):
+        settings.validate()
+
+
+def test_controller_protects_every_configured_device(settings):
+    settings.network_mode = 'wired'
+    settings.poe_ap_mac_address = POE_AP_MAC
+    settings.poe_ap_ip_address = POE_AP_IP
+    settings.protected_devices_spec = (
+        f'{SECOND_AP_MAC}={SECOND_AP_IP},{SWITCH_MAC}={SWITCH_IP}')
+
+    controller = NetworkController(settings, manage_hardware=False)
+
+    assert controller.trusted_macs == frozenset(
+        {POE_AP_MAC, SECOND_AP_MAC, SWITCH_MAC})
+    assert controller.firewall.protected_devices == {
+        POE_AP_MAC: POE_AP_IP,
+        SECOND_AP_MAC: SECOND_AP_IP,
+        SWITCH_MAC: SWITCH_IP,
+    }
+
+
+def test_protected_devices_ignored_when_the_pi_runs_its_own_radio(settings):
+    settings.network_mode = 'ap'
+    settings.protected_devices_spec = f'{SECOND_AP_MAC}={SECOND_AP_IP}'
+
+    controller = NetworkController(settings, manage_hardware=False)
+
+    # No external AP to protect when hostapd owns the radio.
+    assert controller.trusted_macs == frozenset()
+
+
+def test_controller_drops_a_bad_entry_without_taking_the_gateway_down(settings):
+    settings.network_mode = 'wired'
+    settings.protected_devices_spec = f'{SECOND_AP_MAC}={SECOND_AP_IP}'
+    controller = NetworkController(settings, manage_hardware=False)
+    assert controller.trusted_macs == frozenset({SECOND_AP_MAC})
+
+    settings.protected_devices_spec = 'garbage'
+    controller = NetworkController(settings, manage_hardware=False)
+
+    # validate() would have caught this at startup; a caller that skipped it
+    # still gets a running gateway rather than an exception.
+    assert controller.trusted_macs == frozenset()
