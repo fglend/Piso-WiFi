@@ -161,6 +161,15 @@ class Settings:
     # which stays supported so a single-AP .env needs no edit.
     protected_devices_spec: str = field(
         default_factory=lambda: os.getenv('PROTECTED_DEVICES', '').strip())
+    # Drop traffic a paying device routed for someone else (phone hotspot, USB
+    # tether, travel router). Detected by the already-decremented TTL, since
+    # NAT hides the real client behind the payer's MAC. Off by default: enable
+    # only once you know no customer legitimately sits behind a router.
+    block_tethering: bool = field(
+        default_factory=lambda: _env_bool('BLOCK_TETHERING', False))
+    tethering_blocked_ttls: str = field(
+        default_factory=lambda: os.getenv(
+            'TETHERING_BLOCKED_TTLS', '63,127').strip())
     ap_ssid: str = field(default_factory=lambda: os.getenv('AP_SSID', 'PisoWiFi'))
     ap_password: str = field(default_factory=lambda: os.getenv('AP_PASSWORD', 'pisowifi123'))
     ap_ip: str = field(default_factory=lambda: os.getenv('AP_IP', '192.168.4.1'))

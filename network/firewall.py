@@ -15,6 +15,13 @@ CHAIN = 'PISOWIFI'
 CAPTIVE_CHAIN = 'PISOWIFI_PORTAL'
 INPUT_CHAIN = 'PISOWIFI_INPUT'
 GAME_CHAIN = 'PISOWIFI_GAME'
+TETHER_CHAIN = 'PISOWIFI_TETHER'
+# A packet reaching the Pi straight from a customer device still carries its
+# original TTL: 64 from Android/iOS/Linux, 128 from Windows. One hop already
+# consumed means some device on the customer LAN routed it - a phone hotspot,
+# USB tether or travel router. 254 (from an initial 255) is deliberately not
+# in the default set: network gear legitimately uses that range.
+DEFAULT_TETHER_TTLS = (63, 127)
 # fw mark consumed by the tc low-latency lane (see network/qos.py)
 GAME_MARK = '0x67'
 MAX_MULTIPORT_ENTRIES = 15
@@ -33,12 +40,15 @@ def _synchronized(method):
 class Firewall:
     def __init__(self, ap_interface, internet_interface, ap_ip,
                  protected_devices=None, portal_port=5000,
-                 game_udp_ports=''):
+                 game_udp_ports='', block_tethering=False,
+                 tethering_ttls=''):
         self.ap_interface = ap_interface
         self.internet_interface = internet_interface
         self.ap_ip = ap_ip
         self.portal_port = int(portal_port)
         self.game_udp_ports = self._parse_game_ports(game_udp_ports)
+        self.block_tethering = bool(block_tethering)
+        self.tethering_ttls = self._parse_ttls(tethering_ttls)
         self.protected_devices = {
             mac.strip().upper(): ip.strip()
             for mac, ip in (protected_devices or {}).items()
@@ -115,6 +125,9 @@ class Firewall:
 
         self._add_static_rules()
         self._add_game_marking()
+        # Last, so its FORWARD jump lands above the PISOWIFI jump inserted
+        # earlier in this method. See _add_tether_rules for why that matters.
+        self._add_tether_rules()
         self.logger.info(f"Firewall chain {CHAIN} initialized")
 
     def _parse_game_ports(self, spec):
@@ -150,6 +163,92 @@ class Firewall:
         if current:
             chunks.append(current)
         return chunks
+
+    @staticmethod
+    def _parse_ttls(spec):
+        """Validate a comma-separated TTL list, falling back to the defaults.
+
+        An empty spec means "use the defaults", not "block nothing" - the
+        BLOCK_TETHERING switch is what turns the feature off, so a blank list
+        here would silently disable a feature the operator asked for.
+        """
+        if spec is None or str(spec).strip() == '':
+            return list(DEFAULT_TETHER_TTLS)
+        values = []
+        for raw in str(spec).split(','):
+            entry = raw.strip()
+            if not entry:
+                continue
+            if not entry.isdigit() or not 0 < int(entry) < 256:
+                logger.error("Ignoring invalid tethering TTL %r", entry)
+                continue
+            if int(entry) not in values:
+                values.append(int(entry))
+        return values or list(DEFAULT_TETHER_TTLS)
+
+    def _add_tether_rules(self):
+        """Drop traffic a customer device routed on behalf of something else.
+
+        A phone hotspot NATs, so a tethered laptop's packets arrive wearing the
+        phone's MAC and are indistinguishable from the payer's own traffic by
+        the MAC match in allow_mac(). What they cannot hide is the extra hop:
+        the TTL has already been decremented once.
+
+        This lives in its own chain jumped from FORWARD *above* the PISOWIFI
+        jump, not inside PISOWIFI. allow_mac() inserts each paying device's
+        ACCEPT at position 1 of that chain, so a check placed inside it would
+        never be reached for a paying MAC - and the paying MAC is precisely the
+        one doing the sharing.
+
+        Best-effort like the game lane: never take the gateway down over it.
+        """
+        try:
+            run_cmd(['iptables', '-t', 'filter', '-N', TETHER_CHAIN],
+                    ignore_errors=True)
+            run_cmd(['iptables', '-t', 'filter', '-F', TETHER_CHAIN])
+            jump = ['FORWARD', '-i', self.ap_interface, '-j', TETHER_CHAIN]
+            run_cmd(['iptables', '-D', *jump], ignore_errors=True)
+            self._clear_tether_rules_v6()
+
+            if not self.block_tethering or not self.tethering_ttls:
+                return
+
+            run_cmd(['iptables', '-I', 'FORWARD', '1', *jump[1:]])
+            for ttl in self.tethering_ttls:
+                run_cmd(['iptables', '-A', TETHER_CHAIN, '-m', 'ttl',
+                         '--ttl-eq', str(ttl), '-j', 'DROP'])
+            self._add_tether_rules_v6()
+            self.logger.info(
+                "Tethering block enabled (dropping TTL %s on %s)",
+                ','.join(str(ttl) for ttl in self.tethering_ttls),
+                self.ap_interface)
+        except Exception as e:
+            self.logger.error("Tethering block setup failed (disabled): %s", e)
+
+    def _clear_tether_rules_v6(self):
+        """Remove any v6 tether rules from a previous run."""
+        if not command_exists('ip6tables'):
+            return
+        run_cmd(['ip6tables', '-N', TETHER_CHAIN], ignore_errors=True)
+        run_cmd(['ip6tables', '-F', TETHER_CHAIN], ignore_errors=True)
+        run_cmd(['ip6tables', '-D', 'FORWARD', '-i', self.ap_interface,
+                 '-j', TETHER_CHAIN], ignore_errors=True)
+
+    def _add_tether_rules_v6(self):
+        """Same check for IPv6, where the field is called hop limit.
+
+        Only IPv4 forwarding and NAT are configured by setup(), so today v6
+        should not route at all - but if the operator ever enables it, a v4-only
+        rule would leave the whole bypass open.
+        """
+        if not command_exists('ip6tables'):
+            self.logger.debug("ip6tables absent, skipping v6 tethering block")
+            return
+        run_cmd(['ip6tables', '-I', 'FORWARD', '1', '-i', self.ap_interface,
+                 '-j', TETHER_CHAIN], ignore_errors=True)
+        for ttl in self.tethering_ttls:
+            run_cmd(['ip6tables', '-A', TETHER_CHAIN, '-m', 'hl',
+                     '--hl-eq', str(ttl), '-j', 'DROP'], ignore_errors=True)
 
     def _add_game_marking(self):
         """Low-latency lane marking: game UDP replies to clients get a fw

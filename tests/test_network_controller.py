@@ -748,3 +748,141 @@ def test_controller_drops_a_bad_entry_without_taking_the_gateway_down(settings):
     # validate() would have caught this at startup; a caller that skipped it
     # still gets a running gateway rather than an exception.
     assert controller.trusted_macs == frozenset()
+
+
+# --- tethering block (hotspot / USB tether sharing one paid MAC) -------------
+
+def _setup_commands(firewall, have_ip6tables=True):
+    with patch('network.firewall.open', mock_open()), \
+            patch('network.firewall.command_exists',
+                  lambda name: have_ip6tables or name != 'ip6tables'), \
+            patch('network.firewall.run_cmd') as mock_run:
+        firewall.setup()
+    return [call.args[0] for call in mock_run.call_args_list]
+
+
+def test_tethering_block_is_off_by_default():
+    commands = _setup_commands(Firewall('eth0', 'eth1', '192.168.4.1'))
+
+    # The chain is still created and flushed so a previous run is undone,
+    # but nothing is dropped and no jump is installed.
+    assert ['iptables', '-t', 'filter', '-F', 'PISOWIFI_TETHER'] in commands
+    assert not [c for c in commands if '--ttl-eq' in c]
+    assert ['iptables', '-I', 'FORWARD', '1',
+            '-i', 'eth0', '-j', 'PISOWIFI_TETHER'] not in commands
+
+
+def test_tethering_block_drops_decremented_ttls_when_enabled():
+    firewall = Firewall('eth0', 'eth1', '192.168.4.1', block_tethering=True)
+
+    commands = _setup_commands(firewall)
+
+    for ttl in (63, 127):
+        assert ['iptables', '-A', 'PISOWIFI_TETHER', '-m', 'ttl',
+                '--ttl-eq', str(ttl), '-j', 'DROP'] in commands
+
+
+def test_tether_jump_sits_above_the_pisowifi_jump():
+    """The whole feature depends on this ordering.
+
+    allow_mac() inserts each paying device's ACCEPT at position 1 of PISOWIFI,
+    so a TTL check inside that chain would never be reached for a paying MAC -
+    which is exactly the device doing the sharing. Both jumps use
+    '-I FORWARD 1', so the one issued LAST ends up on top.
+    """
+    firewall = Firewall('eth0', 'eth1', '192.168.4.1', block_tethering=True)
+
+    commands = _setup_commands(firewall)
+    tether_jump = ['iptables', '-I', 'FORWARD', '1',
+                   '-i', 'eth0', '-j', 'PISOWIFI_TETHER']
+    pisowifi_jump = ['iptables', '-I', 'FORWARD', '1',
+                     '-i', 'eth0', '-j', 'PISOWIFI']
+
+    assert tether_jump in commands and pisowifi_jump in commands
+    assert commands.index(tether_jump) > commands.index(pisowifi_jump)
+
+
+def test_tether_rules_are_added_after_the_chain_jump():
+    """Rules must be appended only once the jump exists, and the chain flushed
+    first so setup() stays idempotent."""
+    firewall = Firewall('eth0', 'eth1', '192.168.4.1', block_tethering=True)
+
+    commands = _setup_commands(firewall)
+    flush = commands.index(['iptables', '-t', 'filter', '-F', 'PISOWIFI_TETHER'])
+    first_drop = min(i for i, c in enumerate(commands) if '--ttl-eq' in c)
+
+    assert flush < first_drop
+
+
+def test_custom_ttl_list_is_honoured():
+    firewall = Firewall('eth0', 'eth1', '192.168.4.1',
+                        block_tethering=True, tethering_ttls='63, 254')
+
+    commands = _setup_commands(firewall)
+
+    assert firewall.tethering_ttls == [63, 254]
+    assert ['iptables', '-A', 'PISOWIFI_TETHER', '-m', 'ttl',
+            '--ttl-eq', '254', '-j', 'DROP'] in commands
+    assert not [c for c in commands if '127' in c and '--ttl-eq' in c]
+
+
+@pytest.mark.parametrize('spec,expected', [
+    ('', [63, 127]),               # blank means defaults, not "block nothing"
+    (None, [63, 127]),
+    ('63,63', [63]),               # de-duplicated
+    ('63,garbage,127', [63, 127]),  # bad entries skipped, good ones kept
+    ('0,256,-1', [63, 127]),       # all invalid -> fall back to defaults
+])
+def test_ttl_spec_parsing(spec, expected):
+    firewall = Firewall('eth0', 'eth1', '192.168.4.1', tethering_ttls=spec)
+    assert firewall.tethering_ttls == expected
+
+
+def test_ipv6_hop_limit_is_blocked_too():
+    firewall = Firewall('eth0', 'eth1', '192.168.4.1', block_tethering=True)
+
+    commands = _setup_commands(firewall, have_ip6tables=True)
+
+    # Only v4 forwarding is configured today, but a v4-only rule would leave
+    # the entire bypass open the moment the operator enables IPv6.
+    assert ['ip6tables', '-A', 'PISOWIFI_TETHER', '-m', 'hl',
+            '--hl-eq', '63', '-j', 'DROP'] in commands
+
+
+def test_missing_ip6tables_does_not_break_setup():
+    firewall = Firewall('eth0', 'eth1', '192.168.4.1', block_tethering=True)
+
+    commands = _setup_commands(firewall, have_ip6tables=False)
+
+    assert not [c for c in commands if c and c[0] == 'ip6tables']
+    # v4 protection still applies.
+    assert ['iptables', '-A', 'PISOWIFI_TETHER', '-m', 'ttl',
+            '--ttl-eq', '63', '-j', 'DROP'] in commands
+
+
+def test_tethering_failure_never_takes_the_gateway_down():
+    firewall = Firewall('eth0', 'eth1', '192.168.4.1', block_tethering=True)
+
+    with patch('network.firewall.open', mock_open()), \
+            patch('network.firewall.command_exists', lambda name: False), \
+            patch('network.firewall.run_cmd') as mock_run:
+        # Fail only the tether chain's rule additions.
+        def fail_tether(args, **kwargs):
+            if 'PISOWIFI_TETHER' in args and '-A' in args:
+                raise RuntimeError('iptables build lacks the ttl match')
+            return ''
+        mock_run.side_effect = fail_tether
+        firewall.setup()   # must not raise
+
+    commands = [call.args[0] for call in mock_run.call_args_list]
+    assert ['iptables', '-A', 'PISOWIFI', '-j', 'DROP'] in commands
+
+
+def test_controller_passes_the_tethering_setting_through(settings):
+    settings.block_tethering = True
+    settings.tethering_blocked_ttls = '63'
+
+    controller = NetworkController(settings, manage_hardware=False)
+
+    assert controller.firewall.block_tethering is True
+    assert controller.firewall.tethering_ttls == [63]

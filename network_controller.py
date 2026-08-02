@@ -42,7 +42,11 @@ class NetworkController:
                                  settings.ap_ip, protected_devices,
                                  portal_port=settings.port,
                                  game_udp_ports=getattr(
-                                     settings, 'game_udp_ports', ''))
+                                     settings, 'game_udp_ports', ''),
+                                 block_tethering=getattr(
+                                     settings, 'block_tethering', False),
+                                 tethering_ttls=getattr(
+                                     settings, 'tethering_blocked_ttls', ''))
         self.qos = QoSManager(settings.ap_interface,
                               self.DEFAULT_DOWNLOAD_SPEED, self.DEFAULT_UPLOAD_SPEED)
 
