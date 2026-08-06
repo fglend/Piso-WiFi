@@ -1221,3 +1221,113 @@ body.portal-app {
 
 .steps-compact .step { padding: 0.45rem; }
 .steps-compact .step h3 { font-size: 0.72rem; margin: 0.2rem 0 0; }
+
+/* --- settings: left-nav sections ----------------------------------------- */
+
+.settings-layout {
+  align-items: start;
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(170px, 210px) 1fr;
+}
+
+/* Sticky so the section list stays reachable while a long panel scrolls. */
+.settings-nav {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.4rem;
+  position: sticky;
+  top: 1rem;
+}
+
+.settings-nav-item {
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  padding: 0.55rem 0.7rem;
+  text-align: left;
+  width: 100%;
+}
+
+.settings-nav-item:hover { background: var(--surface-2); color: var(--text); }
+
+.settings-nav-item.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.settings-nav-item.is-danger.active {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.settings-nav-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.settings-content { min-width: 0; }
+
+.settings-panel[hidden] { display: none; }
+
+.settings-actions {
+  align-items: center;
+  display: flex;
+  gap: 0.9rem;
+  justify-content: flex-end;
+  margin-top: 1rem;
+}
+
+.settings-actions[hidden] { display: none; }
+
+/* Danger Zone rows: separated rather than crammed, since each is a distinct
+   irreversible action. */
+.danger-row {
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  gap: 1.25rem;
+  justify-content: space-between;
+  padding-bottom: 1rem;
+  margin-bottom: 1rem;
+}
+
+.danger-row.is-last {
+  border-bottom: 0;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.danger-row > div:first-child { max-width: 62ch; }
+
+@media (max-width: 780px) {
+  .settings-layout { grid-template-columns: 1fr; }
+
+  /* Horizontal scroller on narrow screens - a vertical list would push the
+     panel itself off the first screen. */
+  .settings-nav {
+    flex-direction: row;
+    overflow-x: auto;
+    position: static;
+    scrollbar-width: none;
+  }
+
+  .settings-nav::-webkit-scrollbar { display: none; }
+  .settings-nav-item { white-space: nowrap; width: auto; }
+
+  .danger-row {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+}

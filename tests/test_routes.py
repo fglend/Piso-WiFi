@@ -1317,3 +1317,79 @@ def test_settings_page_offers_the_clear_history_button(admin_client):
 
     assert b'Clear History' in body
     assert b'/admin/devices/clear_history' in body
+
+
+# --- settings page layout -----------------------------------------------------
+
+SETTINGS_FIELDS = (
+    'minutes_per_peso', 'coinslot_claim_timeout', 'coinslot_pulses_per_peso',
+    'portal_title', 'portal_subtitle', 'theme_accent', 'theme_accent_strong',
+    'portal_logo', 'portal_footer_text', 'dashboard_refresh_seconds',
+    'default_download_kbps', 'default_upload_kbps', 'pause_on_disconnect',
+    'allow_manual_pause',
+)
+
+
+def _settings_form_html(admin_client):
+    body = admin_client.get('/admin/settings').data.decode()
+    start = body.index('id="settings-form"')
+    return body[start:body.index('</form>', start)]
+
+
+def test_every_setting_lives_in_one_form(admin_client):
+    """The panels are tabs, not separate forms.
+
+    update_settings() reads every field on each POST and rejects the save if
+    one is missing, so splitting panels into per-panel forms would silently
+    drop settings. Hidden panels still submit - `hidden` hides, not disables.
+    """
+    form_html = _settings_form_html(admin_client)
+
+    for field in SETTINGS_FIELDS:
+        assert f'name="{field}"' in form_html, f'{field} escaped the form'
+
+
+def test_danger_actions_are_outside_the_settings_form(admin_client):
+    form_html = _settings_form_html(admin_client)
+
+    # Nested forms are invalid HTML and would make Save trigger a destructive
+    # action, so these must sit outside it.
+    assert 'reset_revenue' not in form_html
+    assert 'reset_unpaid' not in form_html
+    assert 'clear_history' not in form_html
+
+
+def test_settings_renders_a_section_nav(admin_client):
+    body = admin_client.get('/admin/settings').data
+
+    assert b'class="settings-nav"' in body
+    for panel in (b'panel-pricing', b'panel-portal', b'panel-branding',
+                  b'panel-defaults', b'panel-metering', b'panel-danger'):
+        assert b'data-settings-tab="' + panel + b'"' in body
+        assert b'id="' + panel + b'"' in body
+
+
+def test_only_the_first_settings_panel_is_visible(admin_client):
+    body = admin_client.get('/admin/settings').data.decode()
+    pricing = body.index('id="panel-pricing"')
+    portal = body.index('id="panel-portal"')
+
+    # The opening tag of every panel but the first carries `hidden`.
+    assert 'hidden' not in body[pricing:body.index('>', pricing)]
+    assert 'hidden' in body[portal:body.index('>', portal)]
+
+
+def test_saving_from_the_grouped_page_still_persists_every_section(
+        admin_client, csrf_token, services):
+    """End-to-end guard: a POST of the whole form updates fields from panels
+    that were not on screen."""
+    post(admin_client, '/admin/settings', csrf_token,
+         **_settings_form(portal_title='Grouped',
+                          theme_accent='#123456',
+                          default_download_kbps=4096,
+                          allow_manual_pause='1'))
+
+    assert services.settings.portal_title == 'Grouped'
+    assert services.settings.theme_accent == '#123456'
+    assert services.settings.default_download_kbps == 4096
+    assert services.settings.allow_manual_pause is True

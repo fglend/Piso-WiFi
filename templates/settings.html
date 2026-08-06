@@ -11,219 +11,373 @@
     <a href="{{ url_for('admin.rates') }}" class="btn btn-ghost btn-sm">Edit Price Tiers</a>
 </div>
 
-<div class="card">
-    <div class="card-head">
-        <h2 class="mb-0">Pricing &amp; Coinslot</h2>
-    </div>
-    <div class="card-body">
+{# One form spans every settings panel on purpose. update_settings() reads all
+   fields on each POST and rejects the save if any is missing, so splitting
+   these into per-panel forms would silently drop settings. Hidden panels still
+   submit their inputs - `hidden` hides, it does not disable. #}
+<div class="settings-layout">
+    <nav class="settings-nav" role="tablist" aria-orientation="vertical"
+         aria-label="Settings sections">
+        <button type="button" class="settings-nav-item active" role="tab"
+                id="tab-pricing" aria-selected="true" aria-controls="panel-pricing"
+                data-settings-tab="panel-pricing" tabindex="0">
+            Pricing &amp; Coinslot
+        </button>
+        <button type="button" class="settings-nav-item" role="tab"
+                id="tab-portal" aria-selected="false" aria-controls="panel-portal"
+                data-settings-tab="panel-portal" tabindex="-1">
+            Portal
+        </button>
+        <button type="button" class="settings-nav-item" role="tab"
+                id="tab-branding" aria-selected="false" aria-controls="panel-branding"
+                data-settings-tab="panel-branding" tabindex="-1">
+            Branding
+        </button>
+        <button type="button" class="settings-nav-item" role="tab"
+                id="tab-defaults" aria-selected="false" aria-controls="panel-defaults"
+                data-settings-tab="panel-defaults" tabindex="-1">
+            Defaults &amp; Dashboard
+        </button>
+        <button type="button" class="settings-nav-item" role="tab"
+                id="tab-metering" aria-selected="false" aria-controls="panel-metering"
+                data-settings-tab="panel-metering" tabindex="-1">
+            Metering
+        </button>
+        <button type="button" class="settings-nav-item is-danger" role="tab"
+                id="tab-danger" aria-selected="false" aria-controls="panel-danger"
+                data-settings-tab="panel-danger" tabindex="-1">
+            Danger Zone
+        </button>
+    </nav>
+
+    <div class="settings-content">
         {# multipart so the branding logo can ride along with the other
            settings; every existing text field posts identically. #}
         <form action="{{ url_for('admin.update_settings') }}" method="POST"
-              enctype="multipart/form-data">
+              enctype="multipart/form-data" id="settings-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <div class="form-grid mb-3">
-                <div>
-                    <label for="minutes_per_peso">Fallback minutes per peso</label>
-                    <input id="minutes_per_peso" name="minutes_per_peso" type="number" min="1" max="240" step="0.5"
-                           value="{{ app_settings.minutes_per_peso }}" required>
-                    <div class="muted small mt-2">Used only for amounts the price tiers can't cover.</div>
-                </div>
-                <div>
-                    <label for="coinslot_claim_timeout">Coin session seconds</label>
-                    <input id="coinslot_claim_timeout" name="coinslot_claim_timeout" type="number" min="10" max="600"
-                           value="{{ app_settings.coinslot_claim_timeout }}" required>
-                </div>
-                <div>
-                    <label for="coinslot_pulses_per_peso">Pulses per peso</label>
-                    <input id="coinslot_pulses_per_peso" name="coinslot_pulses_per_peso" type="number" min="1" max="20"
-                           value="{{ app_settings.coinslot_pulses_per_peso }}" required>
-                </div>
-            </div>
 
-            <h2>Portal</h2>
-            <div class="form-grid mb-3">
-                <div>
-                    <label for="portal_title">Portal title</label>
-                    <input id="portal_title" name="portal_title" type="text" maxlength="120"
-                           value="{{ app_settings.portal_title }}" required>
-                </div>
-                <div>
-                    <label for="portal_subtitle">Coin instructions</label>
-                    <input id="portal_subtitle" name="portal_subtitle" type="text" maxlength="180"
-                           value="{{ app_settings.portal_subtitle }}" required>
-                </div>
-            </div>
-
-            <h2>Branding</h2>
-            <div class="form-grid mb-3">
-                <div>
-                    <label for="theme_accent">Accent colour</label>
-                    <div class="form-row">
-                        <input id="theme_accent" name="theme_accent" type="color"
-                               value="{{ app_settings.theme_accent }}"
-                               aria-describedby="theme_accent_help">
-                        <output class="muted small" id="theme_accent_help">
-                            {{ app_settings.theme_accent }}
-                        </output>
+            <section class="card settings-panel" id="panel-pricing" role="tabpanel"
+                     aria-labelledby="tab-pricing" data-form-panel>
+                <div class="card-head">
+                    <div>
+                        <h2 class="mb-0">Pricing &amp; Coinslot</h2>
+                        <div class="muted small">What a peso buys and how the coin slot behaves.</div>
                     </div>
                 </div>
-                <div>
-                    <label for="theme_accent_strong">Accent (pressed)</label>
-                    <div class="form-row">
-                        <input id="theme_accent_strong" name="theme_accent_strong" type="color"
-                               value="{{ app_settings.theme_accent_strong }}"
-                               aria-describedby="theme_accent_strong_help">
-                        <output class="muted small" id="theme_accent_strong_help">
-                            {{ app_settings.theme_accent_strong }}
-                        </output>
+                <div class="card-body">
+                    <div class="form-grid">
+                        <div>
+                            <label for="minutes_per_peso">Fallback minutes per peso</label>
+                            <input id="minutes_per_peso" name="minutes_per_peso" type="number" min="1" max="240" step="0.5"
+                                   value="{{ app_settings.minutes_per_peso }}" required>
+                            <div class="muted small mt-2">Used only for amounts the price tiers can't cover.</div>
+                        </div>
+                        <div>
+                            <label for="coinslot_claim_timeout">Coin session seconds</label>
+                            <input id="coinslot_claim_timeout" name="coinslot_claim_timeout" type="number" min="10" max="600"
+                                   value="{{ app_settings.coinslot_claim_timeout }}" required>
+                            <div class="muted small mt-2">How long one device holds the slot after tapping Insert Coin.</div>
+                        </div>
+                        <div>
+                            <label for="coinslot_pulses_per_peso">Pulses per peso</label>
+                            <input id="coinslot_pulses_per_peso" name="coinslot_pulses_per_peso" type="number" min="1" max="20"
+                                   value="{{ app_settings.coinslot_pulses_per_peso }}" required>
+                            <div class="muted small mt-2">Match your acceptor's pulse output.</div>
+                        </div>
                     </div>
                 </div>
-                <div>
-                    <label for="portal_logo">Logo</label>
-                    <input id="portal_logo" name="portal_logo" type="file"
-                           accept=".jpg,.jpeg,.png,.gif,.webp">
-                    <div class="muted small">JPG, PNG, GIF or WebP. Shown in the header.</div>
-                </div>
-                <div>
-                    <label for="portal_footer_text">Portal footer note</label>
-                    <input id="portal_footer_text" name="portal_footer_text" type="text"
-                           maxlength="120" value="{{ app_settings.portal_footer_text }}"
-                           placeholder="e.g. Salamat po!">
-                </div>
-            </div>
-            {% if app_settings.portal_logo %}
-            <div class="form-row mb-3">
-                <img class="logo-preview"
-                     src="{{ url_for('static', filename='uploads/' ~ app_settings.portal_logo) }}"
-                     alt="Current logo">
-                <label class="checkbox">
-                    <input type="checkbox" name="remove_logo" value="1">
-                    Remove the current logo
-                </label>
-            </div>
-            {% endif %}
+            </section>
 
-            <h2>Defaults &amp; Dashboard</h2>
-            <div class="form-grid mb-3">
-                <div>
-                    <label for="dashboard_refresh_seconds">Dashboard refresh seconds</label>
-                    <input id="dashboard_refresh_seconds" name="dashboard_refresh_seconds" type="number" min="3" max="120"
-                           value="{{ app_settings.dashboard_refresh_seconds }}" required>
+            <section class="card settings-panel" id="panel-portal" role="tabpanel"
+                     aria-labelledby="tab-portal" data-form-panel hidden>
+                <div class="card-head">
+                    <div>
+                        <h2 class="mb-0">Portal</h2>
+                        <div class="muted small">Wording customers see on the captive portal.</div>
+                    </div>
                 </div>
-                <div>
-                    <label for="default_download_kbps">Default download kbps</label>
-                    <input id="default_download_kbps" name="default_download_kbps" type="number" min="32" max="100000"
-                           value="{{ app_settings.default_download_kbps }}" required>
+                <div class="card-body">
+                    <div class="form-grid">
+                        <div>
+                            <label for="portal_title">Portal title</label>
+                            <input id="portal_title" name="portal_title" type="text" maxlength="120"
+                                   value="{{ app_settings.portal_title }}" required>
+                        </div>
+                        <div>
+                            <label for="portal_subtitle">Coin instructions</label>
+                            <input id="portal_subtitle" name="portal_subtitle" type="text" maxlength="180"
+                                   value="{{ app_settings.portal_subtitle }}" required>
+                        </div>
+                    </div>
                 </div>
-                <div>
-                    <label for="default_upload_kbps">Default upload kbps</label>
-                    <input id="default_upload_kbps" name="default_upload_kbps" type="number" min="32" max="100000"
-                           value="{{ app_settings.default_upload_kbps }}" required>
-                </div>
-            </div>
+            </section>
 
-            <h2>Metering</h2>
-            {% set pausing_on = app_settings.pause_on_disconnect in ('1', 'true', 'yes', 'on') %}
-            <div class="setting-toggle mb-3">
-                <input id="pause_on_disconnect" name="pause_on_disconnect" type="checkbox"
-                       value="1" {% if pausing_on %}checked{% endif %}>
-                <div>
-                    <label for="pause_on_disconnect" class="mb-0">Pause time automatically when a device disconnects</label>
-                    <div class="muted small mt-2">
-                        <strong>On</strong> &mdash; time is screen time. A customer's
-                        countdown freezes by itself the moment they leave the
-                        network and resumes when they come back.
-                    </div>
-                    <div class="muted small mt-2">
-                        <strong>Off</strong> &mdash; time is elapsed time. The countdown
-                        keeps running while the device is away, so a day, week or
-                        monthly package expires on schedule instead of lasting for
-                        months of occasional use. Shop downtime is never charged.
+            <section class="card settings-panel" id="panel-branding" role="tabpanel"
+                     aria-labelledby="tab-branding" data-form-panel hidden>
+                <div class="card-head">
+                    <div>
+                        <h2 class="mb-0">Branding</h2>
+                        <div class="muted small">Colours and logo, applied to the portal and this dashboard.</div>
                     </div>
                 </div>
-            </div>
-
-            {% set manual_pause_on = app_settings.allow_manual_pause in ('1', 'true', 'yes', 'on') %}
-            <div class="setting-toggle mb-3">
-                <input id="allow_manual_pause" name="allow_manual_pause" type="checkbox"
-                       value="1" {% if manual_pause_on %}checked{% endif %}>
-                <div>
-                    <label for="allow_manual_pause" class="mb-0">Let customers pause their own time</label>
-                    <div class="muted small mt-2">
-                        Shows the <em>Pause my time</em> button on the portal. A customer
-                        who taps it stops their countdown and their internet until they
-                        tap Resume &mdash; this works even when automatic pausing above
-                        is off, so someone who knows they are leaving can deliberately
-                        stop their own clock first.
+                <div class="card-body">
+                    <div class="form-grid">
+                        <div>
+                            <label for="theme_accent">Accent colour</label>
+                            <div class="form-row">
+                                <input id="theme_accent" name="theme_accent" type="color"
+                                       value="{{ app_settings.theme_accent }}"
+                                       aria-describedby="theme_accent_help">
+                                <output class="muted small" id="theme_accent_help"
+                                        for="theme_accent">{{ app_settings.theme_accent }}</output>
+                            </div>
+                        </div>
+                        <div>
+                            <label for="theme_accent_strong">Accent (pressed)</label>
+                            <div class="form-row">
+                                <input id="theme_accent_strong" name="theme_accent_strong" type="color"
+                                       value="{{ app_settings.theme_accent_strong }}"
+                                       aria-describedby="theme_accent_strong_help">
+                                <output class="muted small" id="theme_accent_strong_help"
+                                        for="theme_accent_strong">{{ app_settings.theme_accent_strong }}</output>
+                            </div>
+                        </div>
+                        <div>
+                            <label for="portal_logo">Logo</label>
+                            <input id="portal_logo" name="portal_logo" type="file"
+                                   accept=".jpg,.jpeg,.png,.gif,.webp">
+                            <div class="muted small mt-2">JPG, PNG, GIF or WebP. Shown in the header.</div>
+                        </div>
+                        <div>
+                            <label for="portal_footer_text">Portal footer note</label>
+                            <input id="portal_footer_text" name="portal_footer_text" type="text"
+                                   maxlength="120" value="{{ app_settings.portal_footer_text }}"
+                                   placeholder="e.g. Salamat po!">
+                        </div>
                     </div>
-                    <div class="muted small mt-2">
-                        Turn this off if a package should always expire on elapsed time
-                        with no way for a customer to stretch it.
+                    {% if app_settings.portal_logo %}
+                    <div class="form-row mt-3">
+                        <img class="logo-preview"
+                             src="{{ url_for('static', filename='uploads/' ~ app_settings.portal_logo) }}"
+                             alt="Current logo">
+                        <label class="checkbox">
+                            <input type="checkbox" name="remove_logo" value="1">
+                            Remove the current logo
+                        </label>
+                    </div>
+                    {% endif %}
+                </div>
+            </section>
+
+            <section class="card settings-panel" id="panel-defaults" role="tabpanel"
+                     aria-labelledby="tab-defaults" data-form-panel hidden>
+                <div class="card-head">
+                    <div>
+                        <h2 class="mb-0">Defaults &amp; Dashboard</h2>
+                        <div class="muted small">Speed limits for new devices, and how often this page refreshes.</div>
                     </div>
                 </div>
-            </div>
+                <div class="card-body">
+                    <div class="form-grid">
+                        <div>
+                            <label for="dashboard_refresh_seconds">Dashboard refresh seconds</label>
+                            <input id="dashboard_refresh_seconds" name="dashboard_refresh_seconds" type="number" min="3" max="120"
+                                   value="{{ app_settings.dashboard_refresh_seconds }}" required>
+                            <div class="muted small mt-2">Lower values poll the gateway harder. 10s is a good balance.</div>
+                        </div>
+                        <div>
+                            <label for="default_download_kbps">Default download kbps</label>
+                            <input id="default_download_kbps" name="default_download_kbps" type="number" min="32" max="100000"
+                                   value="{{ app_settings.default_download_kbps }}" required>
+                        </div>
+                        <div>
+                            <label for="default_upload_kbps">Default upload kbps</label>
+                            <input id="default_upload_kbps" name="default_upload_kbps" type="number" min="32" max="100000"
+                                   value="{{ app_settings.default_upload_kbps }}" required>
+                        </div>
+                    </div>
+                </div>
+            </section>
 
-            <button type="submit" class="btn btn-primary">Save Settings</button>
+            <section class="card settings-panel" id="panel-metering" role="tabpanel"
+                     aria-labelledby="tab-metering" data-form-panel hidden>
+                <div class="card-head">
+                    <div>
+                        <h2 class="mb-0">Metering</h2>
+                        <div class="muted small">Whether paid time counts as screen time or elapsed time.</div>
+                    </div>
+                </div>
+                <div class="card-body">
+                    {% set pausing_on = app_settings.pause_on_disconnect in ('1', 'true', 'yes', 'on') %}
+                    <div class="setting-toggle mb-3">
+                        <input id="pause_on_disconnect" name="pause_on_disconnect" type="checkbox"
+                               value="1" {% if pausing_on %}checked{% endif %}>
+                        <div>
+                            <label for="pause_on_disconnect" class="mb-0">Pause time automatically when a device disconnects</label>
+                            <div class="muted small mt-2">
+                                <strong>On</strong> &mdash; time is screen time. A customer's
+                                countdown freezes by itself the moment they leave the
+                                network and resumes when they come back.
+                            </div>
+                            <div class="muted small mt-2">
+                                <strong>Off</strong> &mdash; time is elapsed time. The countdown
+                                keeps running while the device is away, so a day, week or
+                                monthly package expires on schedule instead of lasting for
+                                months of occasional use. Shop downtime is never charged.
+                            </div>
+                        </div>
+                    </div>
+
+                    {% set manual_pause_on = app_settings.allow_manual_pause in ('1', 'true', 'yes', 'on') %}
+                    <div class="setting-toggle">
+                        <input id="allow_manual_pause" name="allow_manual_pause" type="checkbox"
+                               value="1" {% if manual_pause_on %}checked{% endif %}>
+                        <div>
+                            <label for="allow_manual_pause" class="mb-0">Let customers pause their own time</label>
+                            <div class="muted small mt-2">
+                                Shows the <em>Pause my time</em> button on the portal. A customer
+                                who taps it stops their countdown and their internet until they
+                                tap Resume &mdash; this works even when automatic pausing above
+                                is off, so someone who knows they are leaving can deliberately
+                                stop their own clock first.
+                            </div>
+                            <div class="muted small mt-2">
+                                Turn this off if a package should always expire on elapsed time
+                                with no way for a customer to stretch it.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            {# Outside every panel so it stays put as sections change. Hidden
+               only while the Danger Zone panel is open, which is not part of
+               this form. #}
+            <div class="settings-actions" id="settings-actions">
+                <span class="muted small">Saving applies every section, not just the one on screen.</span>
+                <button type="submit" class="btn btn-primary">Save Settings</button>
+            </div>
         </form>
+
+        <section class="card settings-panel" id="panel-danger" role="tabpanel"
+                 aria-labelledby="tab-danger" hidden>
+            <div class="card-head">
+                <div>
+                    <h2 class="mb-0">Danger Zone</h2>
+                    <div class="muted small">Listed least to most destructive.</div>
+                </div>
+            </div>
+            <div class="card-body">
+                {# First because it is the reversible one: it touches no
+                   records, so a mistaken click costs nothing. #}
+                <div class="danger-row">
+                    <div>
+                        <h3 class="mb-0">Clear unpaid connected devices</h3>
+                        <p class="muted small mb-0">Drops every connected device with no time
+                            balance from the dashboard: re-blocks it, clears its stale lease and
+                            neighbour entries, and forgets it. No records, balances or history are
+                            deleted &mdash; a device that is still connected reappears on the next
+                            poll, and anyone with time left keeps their access. Paused customers
+                            still hold time, so they are never affected.</p>
+                    </div>
+                    <form action="{{ url_for('admin.reset_unpaid_devices') }}" method="POST" class="mb-0"
+                          onsubmit="return confirm('Clear all connected devices that have no time balance? Nothing is deleted - they can reconnect and pay as normal.');">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button type="submit" class="btn btn-warn">Clear Unpaid Devices</button>
+                    </form>
+                </div>
+
+                <div class="danger-row">
+                    <div>
+                        <h3 class="mb-0">Clear disconnected history</h3>
+                        <p class="muted small mb-0">Empties the Disconnected tab of Device History.
+                            Devices connected right now are not touched, and rows for anyone who
+                            still has time are kept so the With Balance tab keeps showing their
+                            hostname and last IP. Balances, revenue, vouchers and time logs are
+                            unaffected. This cannot be undone.</p>
+                    </div>
+                    <form action="{{ url_for('admin.clear_disconnected_history') }}" method="POST" class="mb-0"
+                          onsubmit="return confirm('Clear the disconnected device history? Connected devices and anyone with time left are kept. This cannot be undone.');">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button type="submit" class="btn btn-warn">Clear History</button>
+                    </form>
+                </div>
+
+                <div class="danger-row is-last">
+                    <div>
+                        <h3 class="mb-0">Reset revenue</h3>
+                        <p class="muted small mb-0">Sets today/week/month revenue back to zero by
+                            clearing the revenue ledger. Device balances, vouchers and time logs are
+                            kept. This cannot be undone.</p>
+                    </div>
+                    <form action="{{ url_for('admin.reset_revenue') }}" method="POST" class="mb-0"
+                          onsubmit="return confirm('Reset ALL revenue to zero? This clears the revenue ledger and cannot be undone.');">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button type="submit" class="btn btn-danger"
+                                style="background:#dc2626;border-color:#dc2626;color:#fff;">
+                            Reset Revenue
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </section>
     </div>
 </div>
 
-<div class="card">
-    <div class="card-head">
-        <h2 class="mb-0">Danger Zone</h2>
-    </div>
-    <div class="card-body">
-        {# Listed above Reset revenue because it is the reversible one: it
-           touches no records, so a mistaken click costs nothing. #}
-        <div class="row-between mb-4">
-            <div>
-                <h3 class="mb-0">Clear unpaid connected devices</h3>
-                <p class="muted small mb-0">Drops every connected device with no time
-                    balance from the dashboard: re-blocks it, clears its stale lease and
-                    neighbour entries, and forgets it. No records, balances or history are
-                    deleted &mdash; a device that is still connected reappears on the next
-                    poll, and anyone with time left keeps their access. Paused customers
-                    still hold time, so they are never affected.</p>
-            </div>
-            <form action="{{ url_for('admin.reset_unpaid_devices') }}" method="POST" class="mb-0"
-                  onsubmit="return confirm('Clear all connected devices that have no time balance? Nothing is deleted - they can reconnect and pay as normal.');">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <button type="submit" class="btn btn-warn">Clear Unpaid Devices</button>
-            </form>
-        </div>
+<script>
+(function () {
+    var tabs = Array.prototype.slice.call(
+        document.querySelectorAll('[data-settings-tab]'));
+    var actions = document.getElementById('settings-actions');
+    if (!tabs.length) return;
 
-        <div class="row-between mb-4">
-            <div>
-                <h3 class="mb-0">Clear disconnected history</h3>
-                <p class="muted small mb-0">Empties the Disconnected tab of Device History.
-                    Devices connected right now are not touched, and rows for anyone who
-                    still has time are kept so the With Balance tab keeps showing their
-                    hostname and last IP. Balances, revenue, vouchers and time logs are
-                    unaffected. This cannot be undone.</p>
-            </div>
-            <form action="{{ url_for('admin.clear_disconnected_history') }}" method="POST" class="mb-0"
-                  onsubmit="return confirm('Clear the disconnected device history? Connected devices and anyone with time left are kept. This cannot be undone.');">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <button type="submit" class="btn btn-warn">Clear History</button>
-            </form>
-        </div>
+    function activate(button, moveFocus) {
+        tabs.forEach(function (tab) {
+            var selected = tab === button;
+            var panel = document.getElementById(tab.dataset.settingsTab);
+            tab.classList.toggle('active', selected);
+            tab.setAttribute('aria-selected', selected ? 'true' : 'false');
+            tab.setAttribute('tabindex', selected ? '0' : '-1');
+            if (panel) panel.hidden = !selected;
+        });
+        // The Save bar belongs to the settings form; the Danger Zone panel
+        // sits outside it and has its own buttons.
+        var active = document.getElementById(button.dataset.settingsTab);
+        if (actions) actions.hidden = !(active && active.hasAttribute('data-form-panel'));
+        window.sessionStorage.setItem('settings-tab', button.id);
+        if (moveFocus) button.focus();
+    }
 
-        <div class="row-between">
-            <div>
-                <h3 class="mb-0">Reset revenue</h3>
-                <p class="muted small mb-0">Sets today/week/month revenue back to zero by
-                    clearing the revenue ledger. Device balances, vouchers and time logs are
-                    kept. This cannot be undone.</p>
-            </div>
-            <form action="{{ url_for('admin.reset_revenue') }}" method="POST" class="mb-0"
-                  onsubmit="return confirm('Reset ALL revenue to zero? This clears the revenue ledger and cannot be undone.');">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <button type="submit" class="btn btn-danger"
-                        style="background:#dc2626;border-color:#dc2626;color:#fff;">
-                    Reset Revenue
-                </button>
-            </form>
-        </div>
-    </div>
-</div>
+    tabs.forEach(function (button, index) {
+        button.addEventListener('click', function () { activate(button, false); });
+        button.addEventListener('keydown', function (event) {
+            var target = null;
+            if (event.key === 'ArrowDown' || event.key === 'ArrowRight') target = (index + 1) % tabs.length;
+            if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') target = (index - 1 + tabs.length) % tabs.length;
+            if (event.key === 'Home') target = 0;
+            if (event.key === 'End') target = tabs.length - 1;
+            if (target !== null) {
+                event.preventDefault();
+                activate(tabs[target], true);
+            }
+        });
+    });
+
+    // Come back to the section you were last editing after a save redirect.
+    var saved = document.getElementById(
+        window.sessionStorage.getItem('settings-tab') || '');
+    activate(saved && saved.matches('[data-settings-tab]') ? saved : tabs[0], false);
+
+    // Live-echo the chosen colour beside each swatch.
+    ['theme_accent', 'theme_accent_strong'].forEach(function (name) {
+        var input = document.getElementById(name);
+        var output = document.getElementById(name + '_help');
+        if (!input || !output) return;
+        input.addEventListener('input', function () {
+            output.textContent = input.value;
+        });
+    });
+})();
+</script>
 {% endblock %}
