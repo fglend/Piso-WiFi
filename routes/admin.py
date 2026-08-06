@@ -357,6 +357,20 @@ def reset_unpaid_devices():
     return redirect(url_for('admin.update_settings'))
 
 
+@admin_bp.route('/admin/devices/clear_history', methods=['POST'])
+@admin_required
+def clear_disconnected_history():
+    """Empty the Disconnected tab of Device History."""
+    svc = _services()
+    removed = svc.user_manager.clear_disconnected_history()
+    if removed:
+        flash(f'Cleared {removed} disconnected device record(s)', 'success')
+    else:
+        flash('No disconnected device records to clear', 'info')
+    logger.info("Admin cleared %s disconnected record(s)", removed)
+    return redirect(url_for('admin.update_settings'))
+
+
 @admin_bp.route('/add_time', methods=['POST'])
 @admin_required
 def add_time():

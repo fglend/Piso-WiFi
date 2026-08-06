@@ -354,6 +354,36 @@ class UserManager:
         finally:
             conn.close()
 
+    def clear_disconnected_history(self):
+        """Empty the Disconnected tab on demand.
+
+        Same target as prune_history()'s age-based sweep, but immediate and
+        without a cutoff - the operator asking for a clean list now.
+
+        Two things are deliberately kept:
+          * Open sessions (disconnected_at IS NULL) are devices connected
+            right now, not history.
+          * Rows for a device that still has time. get_users_with_balance()
+            left-joins this table for the hostname, last IP and last-seen
+            shown on the With Balance tab, so deleting them would blank
+            columns the operator actively uses to identify a customer.
+
+        Balances, transactions, vouchers and time_logs are untouched. Returns
+        the number of rows removed.
+        """
+        with self._with_conn('Clearing disconnected history',
+                             default=0) as (conn, out):
+            out.result = conn.execute('''
+                DELETE FROM device_connections
+                WHERE disconnected_at IS NOT NULL
+                  AND mac_address NOT IN (
+                      SELECT mac_address FROM users WHERE time_balance > 0
+                  )
+            ''').rowcount
+        self.logger.info("Cleared %s disconnected connection record(s)",
+                         out.result)
+        return out.result
+
     def prune_history(self, time_log_days=CONNECTION_HISTORY_DAYS):
         """Trim the append-only history tables. Hourly housekeeping, not a
         per-poll cost: the closed-connection cap sorts the whole closed set,

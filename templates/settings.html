@@ -192,6 +192,22 @@
             </form>
         </div>
 
+        <div class="row-between mb-4">
+            <div>
+                <h3 class="mb-0">Clear disconnected history</h3>
+                <p class="muted small mb-0">Empties the Disconnected tab of Device History.
+                    Devices connected right now are not touched, and rows for anyone who
+                    still has time are kept so the With Balance tab keeps showing their
+                    hostname and last IP. Balances, revenue, vouchers and time logs are
+                    unaffected. This cannot be undone.</p>
+            </div>
+            <form action="{{ url_for('admin.clear_disconnected_history') }}" method="POST" class="mb-0"
+                  onsubmit="return confirm('Clear the disconnected device history? Connected devices and anyone with time left are kept. This cannot be undone.');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="btn btn-warn">Clear History</button>
+            </form>
+        </div>
+
         <div class="row-between">
             <div>
                 <h3 class="mb-0">Reset revenue</h3>

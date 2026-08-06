@@ -1222,3 +1222,98 @@ def test_settings_page_offers_the_clear_button(admin_client):
 
     assert b'Clear Unpaid Devices' in body
     assert b'/admin/devices/reset_unpaid' in body
+
+
+# --- clear disconnected history ----------------------------------------------
+
+def _closed_session(services, mac, ip):
+    """Connect then disconnect a device, leaving one closed history row.
+
+    A single absent poll only increments missed_polls; the row is not marked
+    disconnected until it reaches DISCONNECT_CONFIRMATION_POLLS.
+    """
+    from user_manager import DISCONNECT_CONFIRMATION_POLLS
+    services.user_manager.sync_connection_snapshot(
+        [{'mac_address': mac, 'ip': ip, 'hostname': 'phone'}])
+    for _ in range(DISCONNECT_CONFIRMATION_POLLS):
+        services.user_manager.sync_connection_snapshot([])
+
+
+def test_clear_history_empties_the_disconnected_tab(
+        admin_client, csrf_token, services):
+    _closed_session(services, MAC, '192.168.4.7')
+    assert services.user_manager.get_disconnected_devices()
+
+    resp = post(admin_client, '/admin/devices/clear_history', csrf_token)
+
+    assert resp.status_code == 302
+    assert services.user_manager.get_disconnected_devices() == []
+
+
+def test_clear_history_keeps_devices_that_still_have_time(
+        admin_client, csrf_token, services):
+    services.user_manager.add_time(MAC, 5, 25)
+    _closed_session(services, MAC, '192.168.4.7')
+
+    post(admin_client, '/admin/devices/clear_history', csrf_token)
+
+    # The With Balance tab left-joins this table for hostname and last IP;
+    # dropping the row would blank the columns used to identify a customer.
+    with_balance = services.user_manager.get_users_with_balance()
+    assert with_balance[0]['ip_address'] == '192.168.4.7'
+    assert with_balance[0]['hostname'] == 'phone'
+
+
+def test_clear_history_leaves_live_sessions_alone(
+        admin_client, csrf_token, services):
+    services.user_manager.sync_connection_snapshot(
+        [{'mac_address': MAC, 'ip': '192.168.4.7', 'hostname': 'phone'}])
+
+    post(admin_client, '/admin/devices/clear_history', csrf_token)
+
+    # An open session is a device connected right now, not history.
+    assert services.user_manager.get_device_sessions(MAC) != []
+
+
+def test_clear_history_touches_no_balances_or_revenue(
+        admin_client, csrf_token, services):
+    services.user_manager.add_time(OTHER_MAC, 5, 25)
+    _closed_session(services, MAC, '192.168.4.7')
+
+    post(admin_client, '/admin/devices/clear_history', csrf_token)
+
+    assert services.user_manager.check_balance(OTHER_MAC) == 25
+    assert services.user_manager.get_revenue_summary()['day'] == 5
+
+
+def test_clear_history_reports_the_count(admin_client, csrf_token, services):
+    _closed_session(services, MAC, '192.168.4.7')
+
+    resp = admin_client.post(
+        '/admin/devices/clear_history', data={'csrf_token': csrf_token},
+        follow_redirects=True)
+
+    assert b'disconnected device record(s)' in resp.data
+
+
+def test_clear_history_reports_when_already_empty(admin_client, csrf_token):
+    resp = admin_client.post(
+        '/admin/devices/clear_history', data={'csrf_token': csrf_token},
+        follow_redirects=True)
+
+    assert b'No disconnected device records to clear' in resp.data
+
+
+def test_clear_history_requires_login(client, csrf_token, services):
+    _closed_session(services, MAC, '192.168.4.7')
+
+    post(client, '/admin/devices/clear_history', csrf_token)
+
+    assert services.user_manager.get_disconnected_devices() != []
+
+
+def test_settings_page_offers_the_clear_history_button(admin_client):
+    body = admin_client.get('/admin/settings').data
+
+    assert b'Clear History' in body
+    assert b'/admin/devices/clear_history' in body
