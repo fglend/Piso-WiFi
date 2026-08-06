@@ -376,8 +376,10 @@ class UserManager:
             out.result = conn.execute('''
                 DELETE FROM device_connections
                 WHERE disconnected_at IS NOT NULL
-                  AND mac_address NOT IN (
-                      SELECT mac_address FROM users WHERE time_balance > 0
+                  AND NOT EXISTS (
+                      SELECT 1 FROM users
+                      WHERE users.mac_address = device_connections.mac_address
+                        AND users.time_balance > 0
                   )
             ''').rowcount
         self.logger.info("Cleared %s disconnected connection record(s)",

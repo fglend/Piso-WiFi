@@ -2,6 +2,7 @@ import datetime as dt
 import os
 import stat
 
+from user_manager import DISCONNECT_CONFIRMATION_POLLS
 from tests.conftest import MAC, OTHER_MAC
 
 
@@ -691,3 +692,44 @@ def test_transactions_between_honours_its_limit(user_manager):
 
     assert len(user_manager.get_transactions_between(
         _today(), _today(), limit=3)) == 3
+
+
+def test_clear_history_is_not_disabled_by_a_null_mac_user_row(user_manager):
+    """A NULL mac_address in users must not silently no-op the whole delete.
+
+    users.mac_address has no NOT NULL constraint. Written with `NOT IN`, a
+    single NULL in the subquery makes the predicate NULL for every row and
+    nothing is deleted at all - the button looks like it worked and did
+    nothing. NOT EXISTS is NULL-safe.
+    """
+    conn = user_manager._connect()
+    try:
+        conn.execute(
+            'INSERT INTO users(mac_address, time_balance) VALUES(NULL, 100)')
+        conn.commit()
+    finally:
+        conn.close()
+
+    _insert_transaction_at(user_manager, 1.0, 5, '2020-01-01 00:00:00')
+    user_manager.sync_connection_snapshot(
+        [{'mac_address': MAC, 'ip': '192.168.4.7', 'hostname': 'h'}])
+    for _ in range(DISCONNECT_CONFIRMATION_POLLS):
+        user_manager.sync_connection_snapshot([])
+    assert user_manager.get_disconnected_devices()
+
+    assert user_manager.clear_disconnected_history() == 1
+    assert user_manager.get_disconnected_devices() == []
+
+
+def test_clear_history_still_spares_a_balance_holder(user_manager):
+    user_manager.add_time(OTHER_MAC, 5, 25)
+    for mac in (MAC, OTHER_MAC):
+        user_manager.sync_connection_snapshot(
+            [{'mac_address': mac, 'ip': '192.168.4.7', 'hostname': 'h'}])
+        for _ in range(DISCONNECT_CONFIRMATION_POLLS):
+            user_manager.sync_connection_snapshot([])
+
+    user_manager.clear_disconnected_history()
+
+    remaining = user_manager.get_users_with_balance()
+    assert remaining[0]['ip_address'] == '192.168.4.7'
