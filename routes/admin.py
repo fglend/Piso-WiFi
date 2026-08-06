@@ -330,6 +330,33 @@ def export_sales_csv():
         headers={'Content-Disposition': f'attachment; filename="{filename}"'})
 
 
+@admin_bp.route('/admin/devices/reset_unpaid', methods=['POST'])
+@admin_required
+def reset_unpaid_devices():
+    """Clear connected devices that have no time left off the dashboard.
+
+    Re-blocks them, flushes their stale lease/neighbour/conntrack state and
+    forgets them. Nothing is deleted: a device still physically connected is
+    treated as new on the next poll, and one that turns out to have balance
+    gets its access straight back.
+    """
+    svc = _services()
+    devices = _dashboard_devices(svc)
+    # Paused customers still hold time, so they are never in this set.
+    unpaid = [device['mac_address'] for device in devices
+              if (device.get('time_balance') or 0) <= 0]
+
+    if not unpaid:
+        flash('No connected devices without time balance', 'info')
+        return redirect(url_for('admin.update_settings'))
+
+    forgotten = svc.network_controller.forget_devices(unpaid)
+    flash(f'Cleared {len(forgotten)} connected device(s) with no time balance. '
+          'They can reconnect and pay as normal.', 'success')
+    logger.info("Admin reset %s unpaid connected device(s)", len(forgotten))
+    return redirect(url_for('admin.update_settings'))
+
+
 @admin_bp.route('/add_time', methods=['POST'])
 @admin_required
 def add_time():

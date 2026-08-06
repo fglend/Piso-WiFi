@@ -169,6 +169,46 @@ class NetworkController:
             self.logger.error(f"Error getting connected devices: {e}")
             return [dict(device) for device in self._known_devices.values()]
 
+    def forget_devices(self, mac_addresses):
+        """Block, flush and drop devices from the connected list.
+
+        The list the dashboard shows is a debounced view of DHCP leases and the
+        neighbour table: a device that walked away lingers for
+        DISCONNECT_CONFIRMATION_POLLS, and a stale lease or neighbour entry can
+        keep it visible longer still. Clearing the in-memory state as well as
+        the kernel's is what actually makes the row go away instead of
+        reappearing on the next poll.
+
+        Nothing is deleted from the database. A device that is still physically
+        connected is simply seen as new on the next poll, and handle_new_device
+        restores its access if it turns out to have balance - so clearing a
+        device by mistake is self-correcting.
+
+        Protected infrastructure is never touched. Returns the MACs forgotten.
+        """
+        forgotten = []
+        with self._discovery_lock:
+            for mac in sorted({str(m).strip().upper() for m in mac_addresses}):
+                if mac in self.trusted_macs:
+                    self.logger.warning(
+                        "Refusing to reset protected device %s", mac)
+                    continue
+                ip_address = (self._known_devices.get(mac) or {}).get('ip')
+                try:
+                    self.firewall.block_mac(mac)
+                except Exception as exc:
+                    self.logger.error(
+                        "Could not block %s during reset: %s", mac, exc)
+                self._flush_stale_state(ip_address)
+                self._known_devices.pop(mac, None)
+                self._absence_counts.pop(mac, None)
+                self.connected_devices.discard(mac)
+                forgotten.append(mac)
+        if forgotten:
+            self.logger.info("Reset %s connected device(s): %s",
+                             len(forgotten), ', '.join(forgotten))
+        return forgotten
+
     def _resolve_protected_devices(self, settings):
         """Infrastructure MAC -> reserved IP, never blocked or redirected.
 

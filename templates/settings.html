@@ -173,6 +173,25 @@
         <h2 class="mb-0">Danger Zone</h2>
     </div>
     <div class="card-body">
+        {# Listed above Reset revenue because it is the reversible one: it
+           touches no records, so a mistaken click costs nothing. #}
+        <div class="row-between mb-4">
+            <div>
+                <h3 class="mb-0">Clear unpaid connected devices</h3>
+                <p class="muted small mb-0">Drops every connected device with no time
+                    balance from the dashboard: re-blocks it, clears its stale lease and
+                    neighbour entries, and forgets it. No records, balances or history are
+                    deleted &mdash; a device that is still connected reappears on the next
+                    poll, and anyone with time left keeps their access. Paused customers
+                    still hold time, so they are never affected.</p>
+            </div>
+            <form action="{{ url_for('admin.reset_unpaid_devices') }}" method="POST" class="mb-0"
+                  onsubmit="return confirm('Clear all connected devices that have no time balance? Nothing is deleted - they can reconnect and pay as normal.');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="btn btn-warn">Clear Unpaid Devices</button>
+            </form>
+        </div>
+
         <div class="row-between">
             <div>
                 <h3 class="mb-0">Reset revenue</h3>

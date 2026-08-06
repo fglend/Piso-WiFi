@@ -1136,3 +1136,89 @@ def test_cascade_is_reported_to_the_operator(admin_client, csrf_token, services)
     # the voucher row.
     assert b'Applied to the device that already redeemed it' in resp.data
     assert MAC.encode() in resp.data
+
+
+# --- clear unpaid connected devices ------------------------------------------
+
+def _connected(services, *macs):
+    services.network_controller.get_connected_devices.return_value = [
+        {'mac_address': mac, 'ip': f'192.168.4.{i + 2}',
+         'hostname': f'h{i}', 'signal': '-50'}
+        for i, mac in enumerate(macs)]
+
+
+def test_clear_unpaid_forgets_only_devices_without_balance(
+        admin_client, csrf_token, services):
+    _connected(services, MAC, OTHER_MAC)
+    services.user_manager.add_time(OTHER_MAC, 5, 25)   # this one paid
+
+    resp = post(admin_client, '/admin/devices/reset_unpaid', csrf_token)
+
+    assert resp.status_code == 302
+    services.network_controller.forget_devices.assert_called_once_with([MAC])
+
+
+def test_clear_unpaid_never_touches_a_paused_customer(
+        admin_client, csrf_token, services):
+    _connected(services, MAC)
+    services.user_manager.add_time(MAC, 5, 25)
+    services.user_manager.set_paused(MAC, True)
+
+    post(admin_client, '/admin/devices/reset_unpaid', csrf_token)
+
+    # A paused device still holds time; clearing it would look like theft.
+    services.network_controller.forget_devices.assert_not_called()
+
+
+def test_clear_unpaid_reports_when_there_is_nothing_to_do(
+        admin_client, csrf_token, services):
+    _connected(services)
+
+    resp = admin_client.post(
+        '/admin/devices/reset_unpaid', data={'csrf_token': csrf_token},
+        follow_redirects=True)
+
+    assert b'No connected devices without time balance' in resp.data
+    services.network_controller.forget_devices.assert_not_called()
+
+
+def test_clear_unpaid_reports_how_many_were_cleared(
+        admin_client, csrf_token, services):
+    _connected(services, MAC, OTHER_MAC)
+    services.network_controller.forget_devices.return_value = [MAC, OTHER_MAC]
+
+    resp = admin_client.post(
+        '/admin/devices/reset_unpaid', data={'csrf_token': csrf_token},
+        follow_redirects=True)
+
+    assert b'Cleared 2 connected device(s)' in resp.data
+
+
+def test_clear_unpaid_deletes_no_records(admin_client, csrf_token, services):
+    _connected(services, MAC)
+    services.user_manager.add_time(MAC, 5, 25)
+    services.user_manager.deduct_time(MAC, 25)         # spent, balance now 0
+    services.network_controller.forget_devices.return_value = [MAC]
+
+    post(admin_client, '/admin/devices/reset_unpaid', csrf_token)
+
+    # The device row and its audit trail must survive: this action is a
+    # network reset, not a purge.
+    assert services.user_manager.get_device_info(MAC) is not None
+    assert services.user_manager.get_transactions() != []
+
+
+def test_clear_unpaid_requires_login(client, csrf_token, services):
+    _connected(services, MAC)
+
+    resp = post(client, '/admin/devices/reset_unpaid', csrf_token)
+
+    assert resp.status_code == 302
+    services.network_controller.forget_devices.assert_not_called()
+
+
+def test_settings_page_offers_the_clear_button(admin_client):
+    body = admin_client.get('/admin/settings').data
+
+    assert b'Clear Unpaid Devices' in body
+    assert b'/admin/devices/reset_unpaid' in body

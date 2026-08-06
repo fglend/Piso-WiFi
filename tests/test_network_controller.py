@@ -1,5 +1,5 @@
 from threading import Event, Thread
-from unittest.mock import mock_open, patch
+from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
 
@@ -886,3 +886,78 @@ def test_controller_passes_the_tethering_setting_through(settings):
 
     assert controller.firewall.block_tethering is True
     assert controller.firewall.tethering_ttls == [63]
+
+
+# --- clearing unpaid connected devices ---------------------------------------
+
+def _seeded_controller(settings, macs_with_ips):
+    controller = NetworkController(settings, manage_hardware=False)
+    controller.firewall = MagicMock()
+    controller.ap = MagicMock()
+    controller._known_devices = {
+        mac: {'mac_address': mac, 'ip': ip} for mac, ip in macs_with_ips.items()}
+    controller._absence_counts = {mac: 1 for mac in macs_with_ips}
+    controller.connected_devices = set(macs_with_ips)
+    return controller
+
+
+def test_forget_devices_blocks_flushes_and_drops_them(settings):
+    controller = _seeded_controller(settings, {MAC: '192.168.4.7'})
+
+    assert controller.forget_devices([MAC]) == [MAC]
+
+    controller.firewall.block_mac.assert_called_once_with(MAC)
+    controller.firewall.flush_device_state.assert_called_once_with('192.168.4.7')
+    # All three pieces of state must go, or the row returns on the next poll.
+    assert MAC not in controller._known_devices
+    assert MAC not in controller._absence_counts
+    assert MAC not in controller.connected_devices
+
+
+def test_forget_devices_leaves_other_devices_alone(settings):
+    controller = _seeded_controller(
+        settings, {MAC: '192.168.4.7', OTHER_MAC: '192.168.4.8'})
+
+    controller.forget_devices([MAC])
+
+    assert OTHER_MAC in controller._known_devices
+    assert OTHER_MAC in controller.connected_devices
+
+
+def test_forget_devices_never_touches_protected_infrastructure(settings):
+    settings.network_mode = 'wired'
+    settings.poe_ap_mac_address = POE_AP_MAC
+    settings.poe_ap_ip_address = POE_AP_IP
+    controller = _seeded_controller(settings, {POE_AP_MAC: POE_AP_IP})
+
+    # Blocking the AP would take every customer offline at once.
+    assert controller.forget_devices([POE_AP_MAC]) == []
+    controller.firewall.block_mac.assert_not_called()
+    assert POE_AP_MAC in controller._known_devices
+
+
+def test_forget_devices_normalises_and_deduplicates_macs(settings):
+    controller = _seeded_controller(settings, {MAC: '192.168.4.7'})
+
+    assert controller.forget_devices([MAC.lower(), f'  {MAC}  ']) == [MAC]
+    assert controller.firewall.block_mac.call_count == 1
+
+
+def test_forget_devices_continues_when_a_block_fails(settings):
+    controller = _seeded_controller(
+        settings, {MAC: '192.168.4.7', OTHER_MAC: '192.168.4.8'})
+    controller.firewall.block_mac.side_effect = [RuntimeError('iptables busy'), None]
+
+    forgotten = controller.forget_devices([MAC, OTHER_MAC])
+
+    # One bad device must not strand the rest in the list.
+    assert set(forgotten) == {MAC, OTHER_MAC}
+    assert controller._known_devices == {}
+
+
+def test_forget_devices_handles_a_device_with_no_known_ip(settings):
+    controller = _seeded_controller(settings, {MAC: None})
+
+    assert controller.forget_devices([MAC]) == [MAC]
+    # _flush_stale_state short-circuits on a missing IP rather than raising.
+    controller.firewall.flush_device_state.assert_not_called()
