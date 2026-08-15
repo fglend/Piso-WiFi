@@ -48,6 +48,7 @@ class Services:
         self.network_controller.on_new_device = self.handle_new_device
         self.network_controller.on_device_snapshot = (
             self.user_manager.sync_connection_snapshot)
+        self.network_controller.on_reassociation = self._handle_reassociation
 
         logger.info("Initializing time manager...")
         self.time_manager = TimeManager(self.user_manager, self.network_controller,
@@ -152,6 +153,20 @@ class Services:
                 if attempt < max_retries:
                     time.sleep(5)
         raise last_error
+
+    def _handle_reassociation(self, mac_address, connected_seconds, prior_seconds):
+        """A connected MAC's Wi-Fi association age reset unexpectedly.
+
+        Logged, not acted on: a genuine cloned-MAC+IP bypass attempt looks
+        exactly like a phone's radio sleeping and reconnecting, so this is a
+        signal for the operator (Security page / audit log), not an automatic
+        block. See NetworkController._check_reassociation for the reasoning.
+        """
+        self.user_manager.log_audit(
+            'device_reassociated', target=mac_address,
+            detail=(f"Wi-Fi association reset ({prior_seconds}s -> "
+                    f"{connected_seconds}s) while already connected - "
+                    "possible duplicate MAC/IP (cloned device)."))
 
     def handle_new_device(self, mac_address):
         info = self.user_manager.get_device_info(mac_address)

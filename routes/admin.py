@@ -279,9 +279,12 @@ def security():
     integrity_status = (
         integrity.check_integrity(baseline) if baseline
         else {'ok': None, 'changed': [], 'missing': [], 'new': []})
+    reassociation_events = svc.user_manager.get_audit_log(
+        limit=10, action='device_reassociated')
     return render_template(
         'security.html', app_settings=app_settings,
-        integrity_status=integrity_status, has_baseline=bool(baseline))
+        integrity_status=integrity_status, has_baseline=bool(baseline),
+        reassociation_events=reassociation_events)
 
 
 @admin_bp.route('/admin/security/ssh_whitelist', methods=['POST'])

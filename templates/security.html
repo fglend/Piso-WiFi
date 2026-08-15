@@ -110,4 +110,46 @@
         </form>
     </div>
 </div>
+
+<div class="card">
+    <div class="card-head">
+        <h2 class="mb-0">Possible Duplicate-Address Attempts</h2>
+    </div>
+    <div class="card-body">
+        <p class="muted small mb-3">
+            A connected device's Wi-Fi association unexpectedly reset - possibly a
+            phone reconnecting on its own, but also the signature of a cloned
+            MAC/IP bypass attempt. Not blocked automatically; review and restrict
+            if it looks real.
+        </p>
+        {% if reassociation_events %}
+        <div class="table-wrap">
+            <table class="table">
+                <thead>
+                    <tr><th>Time</th><th>MAC Address</th><th>Detail</th><th></th></tr>
+                </thead>
+                <tbody>
+                    {% for event in reassociation_events %}
+                    <tr>
+                        <td>{{ event.ts }}</td>
+                        <td><code>{{ event.target }}</code></td>
+                        <td class="muted small">{{ event.detail }}</td>
+                        <td>
+                            <form action="{{ url_for('admin.block_device') }}" method="POST" class="mb-0">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                <input type="hidden" name="mac_address" value="{{ event.target }}">
+                                <input type="hidden" name="reason" value="Duplicate-address attempt (Wi-Fi reassociation)">
+                                <button type="submit" class="btn btn-danger btn-sm">Restrict</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="mb-0">None detected.</p>
+        {% endif %}
+    </div>
+</div>
 {% endblock %}

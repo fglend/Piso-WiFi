@@ -60,6 +60,9 @@ class NetworkController:
         # this to a balance check. Default: block unknown devices.
         self.on_new_device = self.block_mac
         self.on_device_snapshot = lambda devices: None
+        # Called when an already-connected MAC's Wi-Fi association age resets
+        # unexpectedly - see _check_reassociation for what that means.
+        self.on_reassociation = lambda mac, seconds, prior_seconds: None
 
         self.connected_devices = set()
         self._known_devices = {}
@@ -103,6 +106,38 @@ class NetworkController:
         # The cached lease/neighbor lookups may still name the old MAC.
         self.ap.invalidate_caches()
 
+    def _check_reassociation(self, still_connected_macs, prior_devices, observed_by_mac):
+        """Flag a MAC whose Wi-Fi association age went backwards.
+
+        A cloned MAC+IP (see network/firewall.py's tether-block docstring for
+        the same "packet looks identical" problem) is indistinguishable from
+        the real device at the IP layer, since the attacker copies both
+        fields exactly. What cannot be copied unnoticed is the 802.11
+        association itself: hostapd's connected_seconds for a station can only
+        climb while it stays associated, so a MAC that our system already
+        considers connected suddenly reporting a much smaller connected_seconds
+        means some radio just (re)associated presenting that MAC - it, or an
+        impostor, just (re)joined.
+
+        Not proof by itself (a phone's own Wi-Fi radio sleeping and
+        reconnecting looks identical), so this only ever reports the event;
+        it never blocks anything on its own.
+        """
+        for mac in still_connected_macs:
+            prior_seconds = (prior_devices.get(mac) or {}).get('connected_seconds')
+            current_seconds = (observed_by_mac.get(mac) or {}).get('connected_seconds')
+            if (prior_seconds is not None and current_seconds is not None
+                    and current_seconds < prior_seconds):
+                self.logger.warning(
+                    "Possible duplicate-address attempt: %s's Wi-Fi "
+                    "association reset (%ss -> %ss)",
+                    mac, prior_seconds, current_seconds)
+                try:
+                    self.on_reassociation(mac, current_seconds, prior_seconds)
+                except Exception as e:
+                    self.logger.error(
+                        "Reassociation handler failed for %s: %s", mac, e)
+
     def _get_connected_devices(self):
         try:
             prior_devices = dict(self._known_devices)
@@ -143,6 +178,8 @@ class NetworkController:
             current_macs = {d['mac_address'] for d in devices}
             new_devices = current_macs - self.connected_devices
             disconnected = self.connected_devices - current_macs
+            self._check_reassociation(
+                current_macs & self.connected_devices, prior_devices, observed_by_mac)
 
             for mac in new_devices:
                 self.logger.info(f"New device connected: {mac}")

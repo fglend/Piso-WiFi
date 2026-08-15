@@ -219,6 +219,64 @@ def test_new_device_triggers_policy_callback(network_controller):
     assert seen == [MAC]
 
 
+def test_reassociation_flagged_when_connected_seconds_resets(network_controller):
+    """The core duplicate-MAC/IP signal: a still-connected MAC's Wi-Fi
+    association age going backwards means some radio just (re)associated
+    presenting that MAC - see NetworkController._check_reassociation."""
+    events = []
+    network_controller.on_new_device = lambda mac: None
+    network_controller.on_reassociation = (
+        lambda mac, seconds, prior: events.append((mac, seconds, prior)))
+    stations_seq = [
+        [{'mac_address': MAC, 'ip': '192.168.4.20', 'hostname': 'phone',
+          'connected': True, 'connected_seconds': 600}],
+        [{'mac_address': MAC, 'ip': '192.168.4.20', 'hostname': 'phone',
+          'connected': True, 'connected_seconds': 3}],
+    ]
+    with patch.object(network_controller.ap, 'get_stations',
+                      side_effect=stations_seq):
+        network_controller.get_connected_devices()
+        network_controller.get_connected_devices()
+
+    assert events == [(MAC, 3, 600)]
+
+
+def test_reassociation_not_flagged_when_connected_seconds_grows(network_controller):
+    events = []
+    network_controller.on_new_device = lambda mac: None
+    network_controller.on_reassociation = (
+        lambda mac, seconds, prior: events.append((mac, seconds, prior)))
+    stations_seq = [
+        [{'mac_address': MAC, 'ip': '192.168.4.20', 'hostname': 'phone',
+          'connected': True, 'connected_seconds': 15}],
+        [{'mac_address': MAC, 'ip': '192.168.4.20', 'hostname': 'phone',
+          'connected': True, 'connected_seconds': 30}],
+    ]
+    with patch.object(network_controller.ap, 'get_stations',
+                      side_effect=stations_seq):
+        network_controller.get_connected_devices()
+        network_controller.get_connected_devices()
+
+    assert events == []
+
+
+def test_reassociation_not_flagged_without_connected_seconds_data(network_controller):
+    """WiredGateway stations carry no Wi-Fi association age - must not crash
+    or false-positive on missing data."""
+    events = []
+    network_controller.on_new_device = lambda mac: None
+    network_controller.on_reassociation = (
+        lambda mac, seconds, prior: events.append((mac, seconds, prior)))
+    station = {'mac_address': MAC, 'ip': '192.168.4.20',
+               'hostname': 'phone', 'connected': True}
+    with patch.object(network_controller.ap, 'get_stations',
+                      side_effect=[[station], [station]]):
+        network_controller.get_connected_devices()
+        network_controller.get_connected_devices()
+
+    assert events == []
+
+
 def test_device_snapshot_callback_receives_connect_and_disconnect(network_controller):
     snapshots = []
     network_controller.on_device_snapshot = snapshots.append
@@ -534,6 +592,28 @@ def test_get_stations_parses_signal_from_single_dump(settings):
     assert [s['mac_address'] for s in stations] == [MAC, '11:22:33:44:55:66']
     assert stations[0]['signal'] == '-55 dBm'
     assert stations[1]['signal'] == '-71 dBm'
+
+
+def test_get_stations_parses_connected_time(settings):
+    """connected_seconds drives duplicate-address detection in
+    NetworkController._check_reassociation - it must survive real `iw`
+    formatting (tab-separated, trailing "seconds")."""
+    manager = APManager(settings)
+    dump = (
+        "Station 00:11:22:33:44:55 (on wlan0)\n"
+        "\tinactive time:\t10 ms\n"
+        "\tsignal:  \t-55 dBm\n"
+        "\tconnected time:\t3600 seconds\n"
+        "Station 11:22:33:44:55:66 (on wlan0)\n"
+        "\tsignal:  \t-71 dBm\n"
+    )
+    with patch.object(manager, 'get_dhcp_leases', return_value={}), \
+            patch('network.ap_manager.run_cmd', return_value=dump):
+        stations = manager.get_stations()
+
+    assert stations[0]['connected_seconds'] == 3600
+    # No "connected time" line for the second station - stays None, not KeyError.
+    assert stations[1]['connected_seconds'] is None
 
 
 def test_get_devices_info_batches_macs(user_manager):

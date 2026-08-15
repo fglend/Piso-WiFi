@@ -10,6 +10,7 @@ from network.command import run_cmd, command_exists
 logger = logging.getLogger(__name__)
 
 MAC_RE = re.compile(r'^([0-9A-F]{2}:){5}[0-9A-F]{2}$')
+CONNECTED_TIME_RE = re.compile(r"connected time:\s*(\d+)\s*seconds")
 DNSMASQ_LEASES = '/var/lib/misc/dnsmasq.leases'
 # Every portal request resolves the client's identity; without a small cache
 # that is a leases-file read plus an `ip neigh` subprocess per request. Kept
@@ -260,7 +261,15 @@ log-dhcp
 
     def get_stations(self):
         """Return list of station dicts from `iw station dump`, enriched with
-        DHCP lease info and signal strength."""
+        DHCP lease info, signal strength and Wi-Fi association age.
+
+        connected_seconds is how long the station has held its *current*
+        802.11 association (per hostapd/nl80211), not how long our system has
+        known about it. A MAC that is already an active paying session but
+        whose connected_seconds just reset to near-zero means some radio just
+        (re)associated presenting that MAC - the signal network_controller
+        uses to flag a possible duplicate-address (cloned MAC+IP) attempt.
+        """
         stations = []
         dhcp_info = self.get_dhcp_leases()
         try:
@@ -280,12 +289,18 @@ log-dhcp
                         'ip': dhcp_info.get(mac, {}).get('ip', 'Unknown'),
                         'hostname': dhcp_info.get(mac, {}).get('hostname', 'Unknown'),
                         'connected': True,
+                        'connected_seconds': None,
                     }
                     stations.append(current)
-                elif current is not None and 'signal' not in current:
-                    signal = re.search(r"signal:\s*([-\d]+)", line)
-                    if signal:
-                        current['signal'] = f"{signal.group(1)} dBm"
+                elif current is not None:
+                    if 'signal' not in current:
+                        signal = re.search(r"signal:\s*([-\d]+)", line)
+                        if signal:
+                            current['signal'] = f"{signal.group(1)} dBm"
+                    if current.get('connected_seconds') is None:
+                        connected = CONNECTED_TIME_RE.search(line)
+                        if connected:
+                            current['connected_seconds'] = int(connected.group(1))
         except Exception as e:
             self.logger.warning(f"IW station dump failed: {e}")
             raise
