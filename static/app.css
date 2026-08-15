@@ -73,22 +73,28 @@ a { color: var(--accent-strong); }
 .container { max-width: 1100px; margin: 0 auto; padding: 0 1rem 3rem; }
 .container-narrow { max-width: 720px; }
 
-/* --- top bar (admin / login pages) ------------------------------------ */
-.topbar {
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 1.5rem;
-}
-.topbar-inner {
-  max-width: 1100px;
-  margin: 0 auto;
-  padding: 0.8rem 1rem;
+/* --- app shell: sidebar (admin / login pages) -------------------------- */
+.app-shell {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  flex-wrap: wrap;
+  align-items: flex-start;
+  min-height: 100vh;
 }
+.sidebar {
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  width: 240px;
+  flex: 0 0 240px;
+  min-height: 100vh;
+  position: sticky;
+  top: 0;
+  padding: 1.1rem 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+.app-main { flex: 1 1 auto; min-width: 0; }
+.app-main .container { margin: 0; max-width: 1100px; padding: 1.5rem 1.5rem 3rem; }
+
 .brand {
   font-weight: 800;
   letter-spacing: 0.02em;
@@ -97,21 +103,69 @@ a { color: var(--accent-strong); }
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
+  padding: 0 0.3rem;
 }
 .brand-dot {
   width: 0.65rem; height: 0.65rem; border-radius: 50%;
   background: var(--accent); display: inline-block;
 }
-.topbar-nav { display: flex; gap: 0.25rem; flex-wrap: wrap; }
-.topbar-nav a {
+
+.sidebar-nav { display: flex; flex-direction: column; gap: 1.1rem; flex: 1 1 auto; }
+.sidebar-group { display: flex; flex-direction: column; gap: 0.15rem; }
+.sidebar-group-title {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.3rem 0.6rem 0.2rem;
+}
+.sidebar-nav a {
   color: var(--muted);
   text-decoration: none;
-  padding: 0.4rem 0.75rem;
+  padding: 0.5rem 0.6rem;
   border-radius: var(--radius-sm);
   font-size: 0.95rem;
 }
-.topbar-nav a:hover { background: var(--surface-2); color: var(--text); }
-.topbar-nav a.active { background: var(--accent-soft); color: var(--accent-strong); font-weight: 600; }
+.sidebar-nav a:hover { background: var(--surface-2); color: var(--text); }
+.sidebar-nav a.active { background: var(--accent-soft); color: var(--accent-strong); font-weight: 600; }
+
+.sidebar-logout {
+  color: var(--muted);
+  text-decoration: none;
+  padding: 0.5rem 0.6rem;
+  border-radius: var(--radius-sm);
+  border-top: 1px solid var(--border);
+  padding-top: 0.9rem;
+  font-size: 0.95rem;
+}
+.sidebar-logout:hover { background: var(--surface-2); color: var(--text); }
+
+@media (max-width: 780px) {
+  .app-shell { flex-direction: column; }
+  .sidebar {
+    width: auto;
+    flex: 0 0 auto;
+    min-height: 0;
+    position: static;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    flex-direction: row;
+    align-items: center;
+    gap: 0.75rem;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .sidebar::-webkit-scrollbar { display: none; }
+  /* Group labels take too much horizontal room on a phone-width strip;
+     the links themselves stay reachable in one flat scrollable row. */
+  .sidebar-group-title { display: none; }
+  .sidebar-nav { flex-direction: row; gap: 0.25rem; }
+  .sidebar-group { flex-direction: row; gap: 0.25rem; }
+  .sidebar-nav a, .sidebar-logout { white-space: nowrap; }
+  .sidebar-logout { border-top: 0; padding-top: 0.5rem; }
+  .app-main .container { padding: 1.25rem 1rem 3rem; }
+}
 
 /* --- cards / layout ---------------------------------------------------- */
 .card {

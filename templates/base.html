@@ -8,8 +8,8 @@
     {% include "_theme.html" %}
 </head>
 <body>
-    <header class="topbar">
-        <div class="topbar-inner">
+    <div class="app-shell">
+        <aside class="sidebar">
             <a class="brand" href="/">
                 {% if theme.logo %}
                 <img class="brand-logo"
@@ -18,44 +18,64 @@
                 {% else %}
                 <span class="brand-dot"></span>
                 {% endif %}PISO WIFI</a>
-            <nav class="topbar-nav">
-                {% if session.get('is_admin') %}
+
+            {% if session.get('is_admin') %}
+            <nav class="sidebar-nav" aria-label="Admin navigation">
+                <div class="sidebar-group">
+                    <div class="sidebar-group-title">Overview</div>
                     <a href="{{ url_for('admin.dashboard') }}"
                        {% if request.endpoint == 'admin.dashboard' %}class="active"{% endif %}>Dashboard</a>
+                    <a href="{{ url_for('admin.sales_report') }}"
+                       {% if request.endpoint in ('admin.sales_report', 'admin.export_sales_csv') %}class="active"{% endif %}>Reports</a>
+                </div>
+                <div class="sidebar-group">
+                    <div class="sidebar-group-title">Monetization</div>
                     <a href="{{ url_for('admin.rates') }}"
                        {% if request.endpoint == 'admin.rates' %}class="active"{% endif %}>Pricing</a>
-                    <a href="{{ url_for('admin.posts') }}"
-                       {% if request.endpoint in ('admin.posts', 'admin.update_post', 'admin.toggle_post', 'admin.delete_post') %}class="active"{% endif %}>Posts</a>
                     <a href="{{ url_for('admin.vouchers') }}"
                        {% if request.endpoint == 'admin.vouchers' %}class="active"{% endif %}>Vouchers</a>
                     <a href="{{ url_for('admin.transactions') }}"
                        {% if request.endpoint == 'admin.transactions' %}class="active"{% endif %}>Transactions</a>
-                    <a href="{{ url_for('admin.sales_report') }}"
-                       {% if request.endpoint in ('admin.sales_report', 'admin.export_sales_csv') %}class="active"{% endif %}>Reports</a>
-                    <a href="{{ url_for('admin.restricted_devices') }}"
-                       {% if request.endpoint in ('admin.restricted_devices', 'admin.block_device', 'admin.unblock_device') %}class="active"{% endif %}>Restricted</a>
+                </div>
+                <div class="sidebar-group">
+                    <div class="sidebar-group-title">Content</div>
+                    <a href="{{ url_for('admin.posts') }}"
+                       {% if request.endpoint in ('admin.posts', 'admin.update_post', 'admin.toggle_post', 'admin.delete_post') %}class="active"{% endif %}>Posts</a>
                     <a href="{{ url_for('admin.content_filter_page') }}"
                        {% if request.endpoint in ('admin.content_filter_page', 'admin.toggle_content_filter_entry', 'admin.delete_content_filter_entry', 'admin.toggle_content_filter_master') %}class="active"{% endif %}>Filter</a>
+                </div>
+                <div class="sidebar-group">
+                    <div class="sidebar-group-title">Devices &amp; Security</div>
+                    <a href="{{ url_for('admin.restricted_devices') }}"
+                       {% if request.endpoint in ('admin.restricted_devices', 'admin.block_device', 'admin.unblock_device') %}class="active"{% endif %}>Restricted</a>
                     <a href="{{ url_for('admin.security') }}"
                        {% if request.endpoint in ('admin.security', 'admin.update_ssh_whitelist', 'admin.update_dos_protection', 'admin.set_integrity_baseline', 'admin.audit_log', 'admin.export_audit_log_csv') %}class="active"{% endif %}>Security</a>
+                </div>
+                <div class="sidebar-group">
+                    <div class="sidebar-group-title">System</div>
                     <a href="{{ url_for('admin.update_settings') }}"
                        {% if request.endpoint == 'admin.update_settings' %}class="active"{% endif %}>Settings</a>
-                    <a href="{{ url_for('portal.logout') }}">Logout</a>
-                {% else %}
-                    <a href="{{ url_for('portal.login') }}">Admin Login</a>
-                {% endif %}
+                </div>
             </nav>
+            <a class="sidebar-logout" href="{{ url_for('portal.logout') }}">Logout</a>
+            {% else %}
+            <nav class="sidebar-nav" aria-label="Admin navigation">
+                <a href="{{ url_for('portal.login') }}">Admin Login</a>
+            </nav>
+            {% endif %}
+        </aside>
+
+        <div class="app-main">
+            <main class="container">
+                {% with messages = get_flashed_messages(with_categories=true) %}
+                    {% for category, message in messages %}
+                        <div class="flash flash-{{ category }}" role="alert">{{ message }}</div>
+                    {% endfor %}
+                {% endwith %}
+
+                {% block content %}{% endblock %}
+            </main>
         </div>
-    </header>
-
-    <main class="container">
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% for category, message in messages %}
-                <div class="flash flash-{{ category }}" role="alert">{{ message }}</div>
-            {% endfor %}
-        {% endwith %}
-
-        {% block content %}{% endblock %}
-    </main>
+    </div>
 </body>
 </html>
