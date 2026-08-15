@@ -17,6 +17,30 @@
                         preset=preset, group_by=group_by) }}">Export CSV</a>
 </div>
 
+{% set earnings_labels = {'today': 'Today', '7d': 'Last 7 days',
+                          '30d': 'Last 30 days', '365d': 'Last 365 days'} %}
+<section class="card mb-4" aria-labelledby="earnings-title">
+    <div class="card-head">
+        <h2 class="mb-0" id="earnings-title">Earnings vs Prior Period</h2>
+    </div>
+    <div class="grid grid-4">
+        {% for key, label in earnings_labels.items() %}
+        {% set e = earnings[key] %}
+        <div class="metric">
+            <div class="metric-label">{{ label }}</div>
+            <div class="metric-value">&#8369;{{ '%.2f'|format(e.current) }}</div>
+            <div class="muted small">
+                {% if e.pct_change is none %}
+                no prior period to compare
+                {% else %}
+                {{ '+' if e.pct_change >= 0 }}{{ e.pct_change }}% vs &#8369;{{ '%.2f'|format(e.previous) }} prior
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</section>
+
 <section class="card mb-4" aria-labelledby="filter-title">
     <div class="card-head">
         <h2 class="mb-0" id="filter-title">Range</h2>

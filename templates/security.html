@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+
+{% block title %}Security{% endblock %}
+
+{% block content %}
+<div class="row-between mb-3">
+    <div>
+        <h1 class="mb-0">Security</h1>
+        <p class="muted mb-0">SSH access control, DoS mitigation and file integrity monitoring.</p>
+    </div>
+    <a href="{{ url_for('admin.audit_log') }}" class="btn btn-ghost btn-sm">View Audit Log</a>
+</div>
+
+<div class="card">
+    <div class="card-head">
+        <div>
+            <h2 class="mb-0">SSH Access Whitelist</h2>
+            <div class="muted small">
+                Restricts SSH (port 22) to listed MAC addresses. This does not change how the
+                admin panel itself is reached &mdash; it is already only reachable from this
+                device or through an SSH tunnel, so this whitelist protects that tunnel's entry
+                point.
+            </div>
+        </div>
+    </div>
+    <div class="card-body">
+        <form action="{{ url_for('admin.update_ssh_whitelist') }}" method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            {% set ssh_on = app_settings.ssh_whitelist_enabled in ('1', 'true', 'yes', 'on') %}
+            <div class="setting-toggle mb-3">
+                <input id="ssh_whitelist_enabled" name="ssh_whitelist_enabled" type="checkbox"
+                       value="1" {% if ssh_on %}checked{% endif %}>
+                <div>
+                    <label for="ssh_whitelist_enabled" class="mb-0">Restrict SSH to whitelisted MACs</label>
+                    <div class="muted small mt-2">
+                        <strong>Safety:</strong> enabling this with an empty list below leaves SSH
+                        open exactly as before &mdash; the firewall never drops a connection
+                        unless at least one MAC is saved here. Double-check your own device's MAC
+                        is on the list before you rely on this from a remote session.
+                    </div>
+                </div>
+            </div>
+            <label for="ssh_whitelist_macs">Whitelisted MAC addresses (one per line)</label>
+            <textarea id="ssh_whitelist_macs" name="ssh_whitelist_macs" rows="5"
+                      placeholder="AA:BB:CC:DD:EE:FF">{{ app_settings.ssh_whitelist_macs.replace(',', '\n') }}</textarea>
+            <button type="submit" class="btn btn-primary mt-2">Save SSH Whitelist</button>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-head">
+        <div>
+            <h2 class="mb-0">DoS Mitigation</h2>
+            <div class="muted small">SYN cookies plus a per-connection rate limit on the customer LAN.</div>
+        </div>
+    </div>
+    <div class="card-body">
+        <form action="{{ url_for('admin.update_dos_protection') }}" method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            {% set dos_on = app_settings.dos_protection_enabled in ('1', 'true', 'yes', 'on') %}
+            <div class="setting-toggle mb-3">
+                <input id="dos_protection_enabled" name="dos_protection_enabled" type="checkbox"
+                       value="1" {% if dos_on %}checked{% endif %}>
+                <div>
+                    <label for="dos_protection_enabled" class="mb-0">Enable DoS mitigation</label>
+                    <div class="muted small mt-2">
+                        Rate limit is generous (20 new connections/sec, burst 40) so normal
+                        browsing is unaffected &mdash; this only bites during an actual flood.
+                    </div>
+                </div>
+            </div>
+            <button type="submit" class="btn btn-primary">Save</button>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-head">
+        <div>
+            <h2 class="mb-0">File Integrity</h2>
+            <div class="muted small">SHA-256 baseline of tracked source files, for spotting unexpected changes.</div>
+        </div>
+    </div>
+    <div class="card-body">
+        {% if not has_baseline %}
+        <p class="muted">No baseline set yet. Set one now, right after a known-good deploy.</p>
+        {% elif integrity_status.ok %}
+        <p><span class="badge badge-ok">OK</span> All tracked files match the baseline.</p>
+        {% else %}
+        <p><span class="badge badge-danger">Changed</span> Files differ from the baseline:</p>
+        {% if integrity_status.changed %}
+        <p class="mb-0"><strong>Modified:</strong></p>
+        <ul>{% for path in integrity_status.changed %}<li><code>{{ path }}</code></li>{% endfor %}</ul>
+        {% endif %}
+        {% if integrity_status.missing %}
+        <p class="mb-0"><strong>Missing:</strong></p>
+        <ul>{% for path in integrity_status.missing %}<li><code>{{ path }}</code></li>{% endfor %}</ul>
+        {% endif %}
+        {% if integrity_status.new %}
+        <p class="muted small">New since baseline (not necessarily a problem):
+            {% for path in integrity_status.new %}<code>{{ path }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
+        </p>
+        {% endif %}
+        {% endif %}
+        <form action="{{ url_for('admin.set_integrity_baseline') }}" method="POST"
+              onsubmit="return confirm('Set the baseline to the current file contents? Do this only right after a known-good deploy.');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="btn btn-ghost">{{ 'Update' if has_baseline else 'Set' }} Baseline</button>
+        </form>
+    </div>
+</div>
+{% endblock %}

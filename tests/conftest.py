@@ -7,6 +7,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import auth  # noqa: E402
 from config import Settings  # noqa: E402
 from services import Services  # noqa: E402
 from user_manager import UserManager  # noqa: E402
@@ -17,6 +18,17 @@ OTHER_MAC = "11:22:33:44:55:66"
 
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "unit: marks fast unit tests")
+
+
+@pytest.fixture(autouse=True)
+def _reset_login_lockout_state():
+    """auth._login_failures is a bare module-level dict (see auth.py's
+    comment on why it is in-memory, not DB-backed), so it persists across
+    every test in the session unless reset - a failed-login test earlier in
+    the file would otherwise silently affect an unrelated login test later."""
+    auth._login_failures.clear()
+    yield
+    auth._login_failures.clear()
 
 
 @pytest.fixture

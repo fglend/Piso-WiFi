@@ -7,7 +7,8 @@ import time
 from flask import (Blueprint, abort, current_app, flash, jsonify, redirect,
                    render_template, request, session, url_for)
 
-from auth import request_is_loopback, verify_admin
+from auth import (is_locked_out, record_login_failure, record_login_success,
+                  request_is_loopback, verify_admin)
 from post_formatting import render_post_description
 from pricing import format_duration
 
@@ -111,18 +112,33 @@ def login():
     if not request_is_loopback():
         abort(403)
     if request.method == 'POST':
-        settings = _services().settings
+        svc = _services()
+        settings = svc.settings
+        remote_addr = request.remote_addr or 'unknown'
+        if is_locked_out(settings, remote_addr):
+            flash('Too many failed login attempts. Try again in a few '
+                  'minutes.', 'error')
+            svc.user_manager.log_audit(
+                'login_locked_out', actor_ip=remote_addr)
+            return render_template('login.html')
         if verify_admin(settings, request.form.get('username'),
                         request.form.get('password')):
+            record_login_success(remote_addr)
             session['is_admin'] = True
             flash('Logged in successfully', 'success')
+            svc.user_manager.log_audit('login_success', actor_ip=remote_addr)
             return redirect(url_for('admin.dashboard'))
+        record_login_failure(settings, remote_addr)
+        svc.user_manager.log_audit('login_failed', actor_ip=remote_addr)
         flash('Invalid credentials', 'error')
     return render_template('login.html')
 
 
 @portal_bp.route('/logout')
 def logout():
+    if session.get('is_admin'):
+        _services().user_manager.log_audit(
+            'logout', actor_ip=request.remote_addr or 'unknown')
     session.pop('is_admin', None)
     flash('Logged out successfully', 'success')
     return redirect(url_for('portal.index'))

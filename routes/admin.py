@@ -12,6 +12,8 @@ import secrets
 from flask import (Blueprint, Response, abort, current_app, flash, jsonify,
                    redirect, render_template, request, url_for)
 
+import content_filter
+import integrity
 import system_info
 from auth import admin_required, request_is_loopback
 from config import is_valid_color
@@ -252,6 +254,99 @@ def reset_revenue():
     return redirect(url_for('admin.update_settings'))
 
 
+def _parse_mac_lines(text):
+    """One MAC per line (or comma-separated); invalid entries are dropped
+    with a flash rather than rejecting the whole submission."""
+    macs, invalid = [], []
+    for raw in re.split(r'[,\n\r]+', text or ''):
+        candidate = raw.strip().upper()
+        if not candidate:
+            continue
+        if is_valid_mac(candidate):
+            if candidate not in macs:
+                macs.append(candidate)
+        else:
+            invalid.append(candidate)
+    return macs, invalid
+
+
+@admin_bp.route('/admin/security')
+@admin_required
+def security():
+    svc = _services()
+    app_settings = svc.refresh_runtime_settings()
+    baseline = svc.user_manager.get_integrity_baseline()
+    integrity_status = (
+        integrity.check_integrity(baseline) if baseline
+        else {'ok': None, 'changed': [], 'missing': [], 'new': []})
+    return render_template(
+        'security.html', app_settings=app_settings,
+        integrity_status=integrity_status, has_baseline=bool(baseline))
+
+
+@admin_bp.route('/admin/security/ssh_whitelist', methods=['POST'])
+@admin_required
+def update_ssh_whitelist():
+    svc = _services()
+    enabled = request.form.get('ssh_whitelist_enabled') == '1'
+    macs, invalid = _parse_mac_lines(request.form.get('ssh_whitelist_macs', ''))
+    if invalid:
+        flash(f'Ignored invalid MAC address(es): {", ".join(invalid)}', 'warning')
+    if enabled and not macs:
+        flash('Whitelist left effectively open: no valid MACs were entered. '
+              'SSH remains reachable from anywhere.', 'warning')
+
+    saved = svc.user_manager.update_app_settings({
+        'ssh_whitelist_enabled': '1' if enabled else '0',
+        'ssh_whitelist_macs': ','.join(macs),
+    })
+    if saved:
+        svc.refresh_runtime_settings()
+        svc.network_controller.apply_ssh_whitelist(macs, enabled)
+        svc.user_manager.log_audit(
+            'ssh_whitelist_updated', actor_ip=request.remote_addr or '',
+            detail=f'enabled={enabled} macs={len(macs)}')
+        flash('SSH whitelist updated', 'success')
+    else:
+        flash('Error updating SSH whitelist', 'error')
+    return redirect(url_for('admin.security'))
+
+
+@admin_bp.route('/admin/security/dos', methods=['POST'])
+@admin_required
+def update_dos_protection():
+    svc = _services()
+    enabled = request.form.get('dos_protection_enabled') == '1'
+    saved = svc.user_manager.update_app_settings({
+        'dos_protection_enabled': '1' if enabled else '0',
+    })
+    if saved:
+        svc.refresh_runtime_settings()
+        svc.network_controller.apply_dos_protection(enabled)
+        svc.user_manager.log_audit(
+            'dos_protection_updated', actor_ip=request.remote_addr or '',
+            detail=f'enabled={enabled}')
+        flash(f'DoS mitigation {"enabled" if enabled else "disabled"}', 'success')
+    else:
+        flash('Error updating DoS mitigation setting', 'error')
+    return redirect(url_for('admin.security'))
+
+
+@admin_bp.route('/admin/security/integrity/baseline', methods=['POST'])
+@admin_required
+def set_integrity_baseline():
+    svc = _services()
+    hashes = integrity.compute_hashes()
+    if svc.user_manager.set_integrity_baseline(hashes):
+        svc.user_manager.log_audit(
+            'integrity_baseline_set', actor_ip=request.remote_addr or '',
+            detail=f'{len(hashes)} file(s)')
+        flash(f'Baseline set from {len(hashes)} tracked file(s)', 'success')
+    else:
+        flash('Error saving integrity baseline', 'error')
+    return redirect(url_for('admin.security'))
+
+
 def _report_range():
     """Resolve the requested report window to (start, end, preset, group_by).
 
@@ -301,6 +396,7 @@ def sales_report():
         'reports.html', report=report, start=start, end=end,
         preset=preset, group_by=group_by,
         groupings=REPORT_GROUPINGS, presets=list(REPORT_PRESETS),
+        earnings=svc.user_manager.get_earnings_summary(),
         app_settings=svc.refresh_runtime_settings())
 
 
@@ -369,6 +465,57 @@ def clear_disconnected_history():
         flash('No disconnected device records to clear', 'info')
     logger.info("Admin cleared %s disconnected record(s)", removed)
     return redirect(url_for('admin.update_settings'))
+
+
+@admin_bp.route('/admin/devices/restricted')
+@admin_required
+def restricted_devices():
+    svc = _services()
+    return render_template(
+        'restricted_devices.html',
+        restricted=svc.user_manager.get_restricted_devices())
+
+
+@admin_bp.route('/admin/devices/block', methods=['POST'])
+@admin_required
+def block_device():
+    """Manually block a device outright, independent of its time balance."""
+    svc = _services()
+    mac = _form_mac()
+    if not mac:
+        return redirect(url_for('admin.restricted_devices'))
+    reason = _form_text('reason', maximum=200)
+
+    svc.user_manager.restrict_device(mac, reason)
+    svc.network_controller.block_mac(mac)
+    svc.user_manager.log_audit(
+        'device_restricted', target=mac, actor_ip=request.remote_addr or '',
+        detail=reason)
+    flash(f'{mac} has been restricted', 'success')
+    return redirect(url_for('admin.restricted_devices'))
+
+
+@admin_bp.route('/admin/devices/unblock', methods=['POST'])
+@admin_required
+def unblock_device():
+    """Clear a manual restriction. Whether the device actually regains
+    network access still follows the normal balance-based policy."""
+    svc = _services()
+    mac = _form_mac()
+    if not mac:
+        return redirect(url_for('admin.restricted_devices'))
+
+    if not svc.user_manager.unrestrict_device(mac):
+        flash(f'No restricted device found for {mac}', 'error')
+        return redirect(url_for('admin.restricted_devices'))
+
+    info = svc.user_manager.get_device_info(mac)
+    if info and not info.get('paused') and info.get('time_balance', 0) > 0:
+        svc.network_controller.unblock_mac(mac)
+    svc.user_manager.log_audit(
+        'device_unrestricted', target=mac, actor_ip=request.remote_addr or '')
+    flash(f'{mac} is no longer restricted', 'success')
+    return redirect(url_for('admin.restricted_devices'))
 
 
 @admin_bp.route('/add_time', methods=['POST'])
@@ -730,6 +877,90 @@ def delete_rate():
     return redirect(url_for('admin.rates'))
 
 
+def _apply_content_filter(svc):
+    """Re-render and push the dnsmasq drop-in file for the current
+    blocklist. Skipped entirely (no-op success) when the feature is off."""
+    if not svc.settings.content_filter_enabled:
+        return True
+    return content_filter.apply_blocklist(
+        svc.user_manager.get_blocklist(),
+        manage_hardware=getattr(svc.settings, 'manage_hardware', True))
+
+
+@admin_bp.route('/admin/content-filter', methods=['GET', 'POST'])
+@admin_required
+def content_filter_page():
+    svc = _services()
+    if request.method == 'POST':
+        pattern = _form_text('pattern', maximum=253).lower()
+        category = _form_text('category', default='custom', maximum=40)
+        if not pattern:
+            flash('Enter a domain to block (e.g. example.com)', 'error')
+            return redirect(url_for('admin.content_filter_page'))
+        svc.user_manager.add_blocklist_entry(pattern, category)
+        _apply_content_filter(svc)
+        svc.user_manager.log_audit(
+            'blocklist_entry_added', target=pattern,
+            actor_ip=request.remote_addr or '', detail=category)
+        flash(f'Blocked {pattern}', 'success')
+        return redirect(url_for('admin.content_filter_page'))
+
+    svc.refresh_runtime_settings()
+    return render_template(
+        'content_filter.html', entries=svc.user_manager.get_blocklist(),
+        app_settings=svc.settings)
+
+
+@admin_bp.route('/admin/content-filter/toggle', methods=['POST'])
+@admin_required
+def toggle_content_filter_entry():
+    svc = _services()
+    entry_id = _form_number('entry_id', minimum=1)
+    enabled = request.form.get('enabled') == '1'
+    if entry_id is None or not svc.user_manager.set_blocklist_entry_enabled(
+            entry_id, enabled):
+        flash('Error updating blocklist entry', 'error')
+    else:
+        _apply_content_filter(svc)
+        flash('Blocklist entry updated', 'success')
+    return redirect(url_for('admin.content_filter_page'))
+
+
+@admin_bp.route('/admin/content-filter/delete', methods=['POST'])
+@admin_required
+def delete_content_filter_entry():
+    svc = _services()
+    entry_id = _form_number('entry_id', minimum=1)
+    if entry_id is None or not svc.user_manager.delete_blocklist_entry(entry_id):
+        flash('Error deleting blocklist entry', 'error')
+    else:
+        _apply_content_filter(svc)
+        flash('Blocklist entry removed', 'success')
+    return redirect(url_for('admin.content_filter_page'))
+
+
+@admin_bp.route('/admin/content-filter/master-toggle', methods=['POST'])
+@admin_required
+def toggle_content_filter_master():
+    """Turn the whole feature on/off without clearing the saved list."""
+    svc = _services()
+    enabled = request.form.get('content_filter_enabled') == '1'
+    if svc.user_manager.update_app_settings(
+            {'content_filter_enabled': '1' if enabled else '0'}):
+        svc.refresh_runtime_settings()
+        if enabled:
+            _apply_content_filter(svc)
+        else:
+            # Clear the drop-in file so previously-blocked domains resolve
+            # again immediately, rather than leaving stale rules in place.
+            content_filter.apply_blocklist(
+                [], manage_hardware=getattr(svc.settings, 'manage_hardware', True))
+        flash(f'Content filter {"enabled" if enabled else "disabled"}', 'success')
+    else:
+        flash('Error updating content filter setting', 'error')
+    return redirect(url_for('admin.content_filter_page'))
+
+
 @admin_bp.route('/vouchers', methods=['GET', 'POST'])
 @admin_required
 def vouchers():
@@ -821,6 +1052,47 @@ def transactions():
         'transactions.html',
         transactions=svc.user_manager.get_transactions(limit=100),
         revenue=svc.user_manager.get_revenue_summary())
+
+
+AUDIT_LOG_ROW_LIMIT = 2000
+
+
+@admin_bp.route('/admin/audit-log')
+@admin_required
+def audit_log():
+    svc = _services()
+    action = request.args.get('action') or None
+    start, end, preset, _ = _report_range()
+    entries = svc.user_manager.get_audit_log(
+        limit=AUDIT_LOG_ROW_LIMIT, action=action,
+        start_date=start.isoformat(), end_date=end.isoformat())
+    return render_template(
+        'audit_log.html', entries=entries, action=action,
+        start=start, end=end, preset=preset, presets=list(REPORT_PRESETS))
+
+
+@admin_bp.route('/admin/audit-log/export.csv')
+@admin_required
+def export_audit_log_csv():
+    svc = _services()
+    action = request.args.get('action') or None
+    start, end, _, _ = _report_range()
+    entries = svc.user_manager.get_audit_log(
+        limit=AUDIT_LOG_ROW_LIMIT, action=action,
+        start_date=start.isoformat(), end_date=end.isoformat())
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(['ts', 'action', 'actor_ip', 'target', 'detail'])
+    for row in entries:
+        writer.writerow([row['ts'], row['action'], row['actor_ip'],
+                         row['target'], row['detail']])
+
+    filename = f"audit-log-{start.isoformat()}-to-{end.isoformat()}.csv"
+    return Response(
+        buffer.getvalue(),
+        mimetype='text/csv',
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'})
 
 
 @admin_bp.route('/debug/connections')

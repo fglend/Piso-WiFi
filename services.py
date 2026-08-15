@@ -100,6 +100,12 @@ class Services:
             'theme_accent_strong': self.settings.theme_accent_strong,
             'portal_logo': self.settings.portal_logo,
             'portal_footer_text': self.settings.portal_footer_text,
+            'login_max_attempts': str(self.settings.login_max_attempts),
+            'login_lockout_seconds': str(self.settings.login_lockout_seconds),
+            'ssh_whitelist_enabled': '1' if self.settings.ssh_whitelist_enabled else '0',
+            'ssh_whitelist_macs': self.settings.ssh_whitelist_macs,
+            'dos_protection_enabled': '1' if self.settings.dos_protection_enabled else '0',
+            'content_filter_enabled': '1' if self.settings.content_filter_enabled else '0',
         }
 
     def refresh_runtime_settings(self):
@@ -125,6 +131,12 @@ class Services:
             values['theme_accent_strong'], self.settings.theme_accent_strong)
         self.settings.portal_logo = values['portal_logo']
         self.settings.portal_footer_text = values['portal_footer_text']
+        self.settings.login_max_attempts = int(values['login_max_attempts'])
+        self.settings.login_lockout_seconds = int(values['login_lockout_seconds'])
+        self.settings.ssh_whitelist_enabled = _as_bool(values['ssh_whitelist_enabled'])
+        self.settings.ssh_whitelist_macs = values['ssh_whitelist_macs']
+        self.settings.dos_protection_enabled = _as_bool(values['dos_protection_enabled'])
+        self.settings.content_filter_enabled = _as_bool(values['content_filter_enabled'])
         return values
 
     def _init_network_controller(self, manage_hardware, max_retries=3):

@@ -32,6 +32,26 @@ def _env_float(name, default):
         return float(default)
 
 
+def _parse_mac_list(spec):
+    """Parse 'MAC,MAC,...' into a de-duplicated list of upper-case MACs.
+
+    Unlike _parse_protected_devices this never raises: a whitelist is safer
+    failing open on one bad entry (logged and skipped) than refusing to start,
+    since this list gates SSH access to the box itself.
+    """
+    macs = []
+    for raw in (spec or '').split(','):
+        mac = raw.strip().upper()
+        if not mac:
+            continue
+        if not _MAC_ADDRESS_RE.fullmatch(mac):
+            logger.warning("Ignoring invalid MAC in whitelist: %r", mac)
+            continue
+        if mac not in macs:
+            macs.append(mac)
+    return macs
+
+
 def _parse_protected_devices(spec):
     """Parse 'MAC=IP,MAC=IP' into {MAC_UPPER: IP}.
 
@@ -198,6 +218,27 @@ class Settings:
     device_retention_hours: int = field(
         default_factory=lambda: _env_int('DEVICE_RETENTION_HOURS', 24))
 
+    # Security: login lockout, SSH access whitelist, DoS mitigation, content
+    # filter. All off/lenient by default so an existing install's behaviour
+    # does not change until the operator opts in from the Security page.
+    login_max_attempts: int = field(default_factory=lambda: _env_int('LOGIN_MAX_ATTEMPTS', 5))
+    login_lockout_seconds: int = field(
+        default_factory=lambda: _env_int('LOGIN_LOCKOUT_SECONDS', 300))
+    # Gates SSH (port 22), not the admin panel itself: the panel is already
+    # loopback-only (see auth.request_is_loopback), so the only remaining path
+    # worth a MAC whitelist is the SSH tunnel used to reach that loopback from
+    # off-box. Disabled by default, and the firewall never adds a DROP rule
+    # while the list is empty - so turning this on with no MACs configured
+    # yet cannot lock the operator out.
+    ssh_whitelist_enabled: bool = field(
+        default_factory=lambda: _env_bool('SSH_WHITELIST_ENABLED', False))
+    ssh_whitelist_macs: str = field(
+        default_factory=lambda: os.getenv('SSH_WHITELIST_MACS', '').strip())
+    dos_protection_enabled: bool = field(
+        default_factory=lambda: _env_bool('DOS_PROTECTION_ENABLED', False))
+    content_filter_enabled: bool = field(
+        default_factory=lambda: _env_bool('CONTENT_FILTER_ENABLED', False))
+
     # Coinslot (GPIO pulse type, e.g. CH-926 / Weiyu universal)
     coinslot_enabled: bool = field(default_factory=lambda: _env_bool('COINSLOT_ENABLED', False))
     coinslot_gpio: int = field(default_factory=lambda: _env_int('COINSLOT_GPIO', 6))
@@ -305,6 +346,15 @@ class Settings:
             devices[mac] = ip
         devices.update(_parse_protected_devices(self.protected_devices_spec))
         return devices
+
+    def ssh_whitelist_mac_list(self):
+        """Validated, de-duplicated MACs allowed to reach SSH (port 22).
+
+        Only consulted when ssh_whitelist_enabled is true. An empty result
+        means "whitelist enabled but nothing configured yet" - the firewall
+        treats that as leaving SSH open rather than dropping everything.
+        """
+        return _parse_mac_list(self.ssh_whitelist_macs)
 
     def _validate_coinslot_pins(self):
         if self.coinslot_enabled and self.coinslot_gpio == self.coinslot_relay_gpio:

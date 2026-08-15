@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}Restricted Devices{% endblock %}
+
+{% block content %}
+<div class="row-between mb-3">
+    <div>
+        <h1 class="mb-0">Restricted Devices</h1>
+        <p class="muted mb-0">
+            Manually block a device outright, regardless of its time balance. Unblocking here
+            restores access only if the device's balance and pause state allow it.
+        </p>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-head">
+        <h2 class="mb-0">Restrict a Device</h2>
+    </div>
+    <div class="card-body">
+        <form action="{{ url_for('admin.block_device') }}" method="POST" class="form-row">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <div>
+                <label for="restrict-mac">MAC address</label>
+                <input id="restrict-mac" name="mac_address" placeholder="AA:BB:CC:DD:EE:FF" required>
+            </div>
+            <div>
+                <label for="restrict-reason">Reason (optional)</label>
+                <input id="restrict-reason" name="reason" maxlength="200" placeholder="e.g. abusive behavior">
+            </div>
+            <button type="submit" class="btn btn-danger">Restrict Device</button>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <div class="table-wrap">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>MAC Address</th>
+                    <th>Balance</th>
+                    <th>Reason</th>
+                    <th>Restricted At</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for device in restricted %}
+                <tr>
+                    <td><code>{{ device.mac_address }}</code></td>
+                    <td>{{ device.time_balance }}</td>
+                    <td>{{ device.restricted_reason or '-' }}</td>
+                    <td>{{ device.restricted_at }}</td>
+                    <td class="text-end">
+                        <form action="{{ url_for('admin.unblock_device') }}" method="POST" class="mb-0">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <input type="hidden" name="mac_address" value="{{ device.mac_address }}">
+                            <button type="submit" class="btn btn-ghost btn-sm">Unrestrict</button>
+                        </form>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="5" class="text-center muted">No restricted devices</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

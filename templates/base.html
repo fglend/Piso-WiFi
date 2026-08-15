@@ -32,6 +32,12 @@
                        {% if request.endpoint == 'admin.transactions' %}class="active"{% endif %}>Transactions</a>
                     <a href="{{ url_for('admin.sales_report') }}"
                        {% if request.endpoint in ('admin.sales_report', 'admin.export_sales_csv') %}class="active"{% endif %}>Reports</a>
+                    <a href="{{ url_for('admin.restricted_devices') }}"
+                       {% if request.endpoint in ('admin.restricted_devices', 'admin.block_device', 'admin.unblock_device') %}class="active"{% endif %}>Restricted</a>
+                    <a href="{{ url_for('admin.content_filter_page') }}"
+                       {% if request.endpoint in ('admin.content_filter_page', 'admin.toggle_content_filter_entry', 'admin.delete_content_filter_entry', 'admin.toggle_content_filter_master') %}class="active"{% endif %}>Filter</a>
+                    <a href="{{ url_for('admin.security') }}"
+                       {% if request.endpoint in ('admin.security', 'admin.update_ssh_whitelist', 'admin.update_dos_protection', 'admin.set_integrity_baseline', 'admin.audit_log', 'admin.export_audit_log_csv') %}class="active"{% endif %}>Security</a>
                     <a href="{{ url_for('admin.update_settings') }}"
                        {% if request.endpoint == 'admin.update_settings' %}class="active"{% endif %}>Settings</a>
                     <a href="{{ url_for('portal.logout') }}">Logout</a>

@@ -16,6 +16,13 @@ CAPTIVE_CHAIN = 'PISOWIFI_PORTAL'
 INPUT_CHAIN = 'PISOWIFI_INPUT'
 GAME_CHAIN = 'PISOWIFI_GAME'
 TETHER_CHAIN = 'PISOWIFI_TETHER'
+SSH_GATE_CHAIN = 'PISOWIFI_SSH_GATE'
+DOS_CHAIN = 'PISOWIFI_DOS'
+SSH_PORT = 22
+# New-connection SYN rate limit: generous enough that a real customer opening
+# several tabs at once is never affected, but bounds a local SYN-flood attempt.
+DOS_SYN_RATE = '20/s'
+DOS_SYN_BURST = '40'
 # A packet reaching the Pi straight from a customer device still carries its
 # original TTL: 64 from Android/iOS/Linux, 128 from Windows. One hop already
 # consumed means some device on the customer LAN routed it - a phone hotspot,
@@ -41,7 +48,8 @@ class Firewall:
     def __init__(self, ap_interface, internet_interface, ap_ip,
                  protected_devices=None, portal_port=5000,
                  game_udp_ports='', block_tethering=False,
-                 tethering_ttls=''):
+                 tethering_ttls='', ssh_whitelist_enabled=False,
+                 ssh_whitelist_macs=None, dos_protection_enabled=False):
         self.ap_interface = ap_interface
         self.internet_interface = internet_interface
         self.ap_ip = ap_ip
@@ -54,6 +62,14 @@ class Firewall:
             for mac, ip in (protected_devices or {}).items()
         }
         self.protected_macs = frozenset(self.protected_devices)
+        # SSH whitelist: only ever restrictive when non-empty (see
+        # _add_ssh_whitelist_rules) so turning the feature on with no MACs
+        # configured cannot lock the operator out.
+        self.ssh_whitelist_enabled = bool(ssh_whitelist_enabled)
+        self.ssh_whitelist_macs = [
+            mac.strip().upper() for mac in (ssh_whitelist_macs or []) if mac.strip()
+        ]
+        self.dos_protection_enabled = bool(dos_protection_enabled)
         self._lock = RLock()
         self.logger = logger
 
@@ -128,7 +144,81 @@ class Firewall:
         # Last, so its FORWARD jump lands above the PISOWIFI jump inserted
         # earlier in this method. See _add_tether_rules for why that matters.
         self._add_tether_rules()
+        self._add_ssh_whitelist_rules()
+        self._add_dos_rules()
         self.logger.info(f"Firewall chain {CHAIN} initialized")
+
+    @_synchronized
+    def apply_ssh_whitelist(self, macs, enabled):
+        """Update the SSH whitelist at runtime (Security page toggle/edit)."""
+        self.ssh_whitelist_macs = [
+            mac.strip().upper() for mac in (macs or []) if mac.strip()
+        ]
+        self.ssh_whitelist_enabled = bool(enabled)
+        self._add_ssh_whitelist_rules()
+
+    def _add_ssh_whitelist_rules(self):
+        """SSH (port 22) access restricted to whitelisted MACs.
+
+        Mirrors _add_tether_rules' structure: an owned chain, jumped from
+        INPUT, rebuilt idempotently. Only ever installs a DROP when the
+        feature is enabled AND at least one MAC is configured - an enabled
+        but empty whitelist leaves SSH exactly as open as before, so turning
+        this on cannot itself lock the operator out.
+        """
+        try:
+            run_cmd(['iptables', '-N', SSH_GATE_CHAIN], ignore_errors=True)
+            run_cmd(['iptables', '-F', SSH_GATE_CHAIN])
+            jump = ['INPUT', '-p', 'tcp', '--dport', str(SSH_PORT),
+                    '-j', SSH_GATE_CHAIN]
+            run_cmd(['iptables', '-D', *jump], ignore_errors=True)
+
+            if not self.ssh_whitelist_enabled or not self.ssh_whitelist_macs:
+                return
+
+            run_cmd(['iptables', '-I', 'INPUT', '1', *jump[1:]])
+            for mac in self.ssh_whitelist_macs:
+                run_cmd(['iptables', '-A', SSH_GATE_CHAIN, '-m', 'mac',
+                         '--mac-source', mac, '-j', 'ACCEPT'])
+            run_cmd(['iptables', '-A', SSH_GATE_CHAIN, '-j', 'DROP'])
+            self.logger.info(
+                "SSH whitelist enabled for %s MAC(s)", len(self.ssh_whitelist_macs))
+        except Exception as e:
+            # Never take SSH down over this - fail open, matching the
+            # tethering/game lane precedent of "optimization/hardening never
+            # takes the gateway down".
+            self.logger.error("SSH whitelist setup failed (left open): %s", e)
+
+    @_synchronized
+    def apply_dos_protection(self, enabled):
+        self.dos_protection_enabled = bool(enabled)
+        self._add_dos_rules()
+
+    def _add_dos_rules(self):
+        """Basic SYN-flood mitigation: SYN cookies plus a per-source new-
+        connection rate limit on the customer-facing interface."""
+        try:
+            with open('/proc/sys/net/ipv4/tcp_syncookies', 'w') as f:
+                f.write('1' if self.dos_protection_enabled else '0')
+        except OSError as e:
+            self.logger.warning("Could not set tcp_syncookies: %s", e)
+
+        try:
+            run_cmd(['iptables', '-N', DOS_CHAIN], ignore_errors=True)
+            run_cmd(['iptables', '-F', DOS_CHAIN])
+            jump = ['INPUT', '-i', self.ap_interface, '-p', 'tcp',
+                    '--syn', '-j', DOS_CHAIN]
+            run_cmd(['iptables', '-D', *jump], ignore_errors=True)
+            if not self.dos_protection_enabled:
+                return
+            run_cmd(['iptables', '-I', 'INPUT', '1', *jump[1:]])
+            run_cmd(['iptables', '-A', DOS_CHAIN, '-m', 'limit',
+                     '--limit', DOS_SYN_RATE, '--limit-burst', DOS_SYN_BURST,
+                     '-j', 'RETURN'])
+            run_cmd(['iptables', '-A', DOS_CHAIN, '-j', 'DROP'])
+            self.logger.info("DoS mitigation enabled (SYN cookies + rate limit)")
+        except Exception as e:
+            self.logger.error("DoS mitigation setup failed (disabled): %s", e)
 
     def _parse_game_ports(self, spec):
         """Validate a comma-separated multiport spec ('5000:5221,20561')."""

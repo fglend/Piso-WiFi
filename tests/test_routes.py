@@ -1393,3 +1393,215 @@ def test_saving_from_the_grouped_page_still_persists_every_section(
     assert services.settings.theme_accent == '#123456'
     assert services.settings.default_download_kbps == 4096
     assert services.settings.allow_manual_pause is True
+
+
+# --- login lockout -------------------------------------------------------
+
+def test_login_locks_out_after_max_attempts(client, csrf_token, services):
+    services.settings.login_max_attempts = 3
+    for _ in range(3):
+        post(client, '/login', csrf_token, username='admin', password='wrong')
+
+    resp = post(client, '/login', csrf_token,
+                username=services.settings.admin_username,
+                password=services.settings.admin_password)
+
+    assert b'Too many failed login attempts' in resp.data
+    with client.session_transaction() as sess:
+        assert not sess.get('is_admin')
+
+
+def test_login_success_clears_prior_failures(client, csrf_token, services):
+    services.settings.login_max_attempts = 3
+    post(client, '/login', csrf_token, username='admin', password='wrong')
+    post(client, '/login', csrf_token,
+         username=services.settings.admin_username,
+         password=services.settings.admin_password)
+
+    with client.session_transaction() as sess:
+        assert sess.get('is_admin') is True
+
+    actions = [e['action'] for e in services.user_manager.get_audit_log()]
+    assert 'login_failed' in actions
+    assert 'login_success' in actions
+
+
+# --- security page: SSH whitelist --------------------------------------------
+
+def test_security_page_requires_admin(client):
+    assert client.get('/admin/security').status_code in (302, 401, 403)
+
+
+def test_ssh_whitelist_saves_valid_macs_and_applies(admin_client, csrf_token, services):
+    resp = post(admin_client, '/admin/security/ssh_whitelist', csrf_token,
+                ssh_whitelist_enabled='1',
+                ssh_whitelist_macs=f'{MAC}\n{OTHER_MAC}')
+
+    assert resp.status_code == 302
+    services.network_controller.apply_ssh_whitelist.assert_called_with(
+        [MAC, OTHER_MAC], True)
+    values = services.user_manager.get_app_settings(services.app_setting_defaults())
+    assert values['ssh_whitelist_macs'] == f'{MAC},{OTHER_MAC}'
+
+
+def test_ssh_whitelist_drops_invalid_macs(admin_client, csrf_token, services):
+    resp = post(admin_client, '/admin/security/ssh_whitelist', csrf_token,
+                ssh_whitelist_enabled='1', ssh_whitelist_macs='not-a-mac')
+
+    assert resp.status_code == 302
+    services.network_controller.apply_ssh_whitelist.assert_called_with([], True)
+
+
+# --- security page: DoS mitigation --------------------------------------------
+
+def test_dos_protection_toggle_applies_and_persists(admin_client, csrf_token, services):
+    resp = post(admin_client, '/admin/security/dos', csrf_token,
+                dos_protection_enabled='1')
+
+    assert resp.status_code == 302
+    services.network_controller.apply_dos_protection.assert_called_with(True)
+    assert services.settings.dos_protection_enabled is True
+
+
+# --- security page: file integrity -------------------------------------------
+
+def test_security_page_shows_no_baseline_initially(admin_client):
+    resp = admin_client.get('/admin/security')
+    assert resp.status_code == 200
+    assert b'No baseline set yet' in resp.data
+
+
+def test_setting_integrity_baseline_then_matches(admin_client, csrf_token):
+    post(admin_client, '/admin/security/integrity/baseline', csrf_token)
+    resp = admin_client.get('/admin/security')
+    assert resp.status_code == 200
+    assert b'All tracked files match the baseline' in resp.data
+
+
+# --- manual device restriction ------------------------------------------------
+
+def test_restricted_devices_requires_admin(client):
+    assert client.get('/admin/devices/restricted').status_code in (302, 401, 403)
+
+
+def test_block_device_marks_restricted_and_blocks(admin_client, csrf_token, services):
+    resp = post(admin_client, '/admin/devices/block', csrf_token,
+                mac_address=MAC, reason='abuse')
+
+    assert resp.status_code == 302
+    services.network_controller.block_mac.assert_called_with(MAC)
+    restricted = services.user_manager.get_restricted_devices()
+    assert len(restricted) == 1
+    assert restricted[0]['mac_address'] == MAC
+    assert restricted[0]['restricted_reason'] == 'abuse'
+
+
+def test_unblock_device_clears_restriction(admin_client, csrf_token, services):
+    services.user_manager.restrict_device(MAC, 'abuse')
+
+    resp = post(admin_client, '/admin/devices/unblock', csrf_token, mac_address=MAC)
+
+    assert resp.status_code == 302
+    assert services.user_manager.get_restricted_devices() == []
+
+
+def test_unblock_restores_access_when_balance_present(admin_client, csrf_token, services):
+    services.user_manager.add_time(MAC, 5, 25)
+    services.user_manager.restrict_device(MAC, '')
+
+    post(admin_client, '/admin/devices/unblock', csrf_token, mac_address=MAC)
+
+    services.network_controller.unblock_mac.assert_called_with(MAC)
+
+
+# --- content filter ------------------------------------------------------
+
+def test_add_and_list_blocklist_entry(admin_client, csrf_token, services):
+    resp = post(admin_client, '/admin/content-filter', csrf_token,
+                pattern='example.com', category='custom')
+
+    assert resp.status_code == 302
+    entries = services.user_manager.get_blocklist()
+    assert len(entries) == 1
+    assert entries[0]['pattern'] == 'example.com'
+
+
+def test_toggle_and_delete_blocklist_entry(admin_client, csrf_token, services):
+    services.user_manager.add_blocklist_entry('example.com')
+    entry_id = services.user_manager.get_blocklist()[0]['id']
+
+    post(admin_client, '/admin/content-filter/toggle', csrf_token,
+         entry_id=entry_id, enabled='0')
+    assert services.user_manager.get_blocklist()[0]['enabled'] == 0
+
+    post(admin_client, '/admin/content-filter/delete', csrf_token, entry_id=entry_id)
+    assert services.user_manager.get_blocklist() == []
+
+
+def test_content_filter_master_toggle_persists(admin_client, csrf_token, services):
+    # manage_hardware=False so the toggle does not try to write a real
+    # dnsmasq drop-in file / reload a real service on the test machine.
+    services.settings.manage_hardware = False
+
+    resp = post(admin_client, '/admin/content-filter/master-toggle', csrf_token,
+                content_filter_enabled='1')
+
+    assert resp.status_code == 302
+    assert services.settings.content_filter_enabled is True
+
+
+# --- earnings summary ---------------------------------------------------------
+
+def test_reports_page_shows_earnings_summary_cards(admin_client, services):
+    services.user_manager.add_time(MAC, 5, 25)
+
+    resp = admin_client.get('/admin/reports')
+
+    assert resp.status_code == 200
+    assert b'Earnings vs Prior Period' in resp.data
+    # no transactions before today, so there is nothing to compare against
+    assert b'no prior period to compare' in resp.data
+
+
+def test_earnings_summary_totals_match_added_time(services):
+    services.user_manager.add_time(MAC, 5, 25)
+    services.user_manager.add_time(OTHER_MAC, 10, 50)
+
+    summary = services.user_manager.get_earnings_summary()
+
+    assert summary['today']['current'] == 15.0
+    assert summary['7d']['current'] == 15.0
+    assert summary['today']['previous'] == 0.0
+    assert summary['today']['pct_change'] is None
+
+
+# --- audit log -----------------------------------------------------------
+
+def test_audit_log_requires_admin(client):
+    assert client.get('/admin/audit-log').status_code in (302, 401, 403)
+
+
+def test_audit_log_records_login_failure(client, csrf_token, services):
+    post(client, '/login', csrf_token, username='admin', password='wrong')
+
+    actions = [e['action'] for e in services.user_manager.get_audit_log()]
+    assert 'login_failed' in actions
+
+
+def test_audit_log_page_filters_by_action(admin_client, services):
+    services.user_manager.log_audit('device_restricted', target=MAC, detail='test')
+
+    resp = admin_client.get('/admin/audit-log?action=device_restricted')
+
+    assert resp.status_code == 200
+    assert MAC.encode() in resp.data
+
+
+def test_audit_log_csv_export(admin_client, services):
+    services.user_manager.log_audit('device_restricted', target=MAC)
+
+    resp = admin_client.get('/admin/audit-log/export.csv')
+
+    assert resp.status_code == 200
+    assert resp.mimetype == 'text/csv'
+    assert b'device_restricted' in resp.data

@@ -1,10 +1,50 @@
 import hmac
 import secrets
+import time
 from functools import wraps
 from ipaddress import ip_address
+from threading import Lock
 
 from flask import flash, redirect, request, session, url_for, abort
 from werkzeug.security import check_password_hash
+
+
+# Failed-login tracker, keyed by remote_addr. In-memory rather than
+# DB-backed: the admin panel is already loopback-gated (see
+# request_is_loopback below), so the realistic attacker here is a single
+# low-volume local process, not a distributed brute force that would need to
+# survive a restart. Cleared on process restart, which is an acceptable
+# trade-off for that threat model.
+_login_failures = {}
+_login_lock = Lock()
+
+
+def _prune_failures(key, window_start):
+    _login_failures[key] = [t for t in _login_failures.get(key, []) if t >= window_start]
+    if not _login_failures[key]:
+        _login_failures.pop(key, None)
+
+
+def is_locked_out(settings, key):
+    """True if `key` (typically remote_addr) has hit the failure threshold
+    within the lockout window."""
+    with _login_lock:
+        window_start = time.monotonic() - settings.login_lockout_seconds
+        _prune_failures(key, window_start)
+        return len(_login_failures.get(key, [])) >= settings.login_max_attempts
+
+
+def record_login_failure(settings, key):
+    with _login_lock:
+        window_start = time.monotonic() - settings.login_lockout_seconds
+        _prune_failures(key, window_start)
+        _login_failures.setdefault(key, []).append(time.monotonic())
+
+
+def record_login_success(key):
+    """Successful login clears any prior failures for this key."""
+    with _login_lock:
+        _login_failures.pop(key, None)
 
 
 def request_is_loopback():

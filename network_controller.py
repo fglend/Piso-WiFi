@@ -46,7 +46,13 @@ class NetworkController:
                                  block_tethering=getattr(
                                      settings, 'block_tethering', False),
                                  tethering_ttls=getattr(
-                                     settings, 'tethering_blocked_ttls', ''))
+                                     settings, 'tethering_blocked_ttls', ''),
+                                 ssh_whitelist_enabled=getattr(
+                                     settings, 'ssh_whitelist_enabled', False),
+                                 ssh_whitelist_macs=settings.ssh_whitelist_mac_list()
+                                 if hasattr(settings, 'ssh_whitelist_mac_list') else [],
+                                 dos_protection_enabled=getattr(
+                                     settings, 'dos_protection_enabled', False))
         self.qos = QoSManager(settings.ap_interface,
                               self.DEFAULT_DOWNLOAD_SPEED, self.DEFAULT_UPLOAD_SPEED)
 
@@ -281,6 +287,15 @@ class NetworkController:
     def is_access_allowed(self, mac_address):
         with self._access_lock:
             return mac_address.upper() in self.allowed_macs
+
+    # --- security toggles (Admin > Security page) --------------------------
+
+    def apply_ssh_whitelist(self, macs, enabled):
+        """Push an updated SSH MAC whitelist to the firewall immediately."""
+        return self.firewall.apply_ssh_whitelist(macs, enabled)
+
+    def apply_dos_protection(self, enabled):
+        return self.firewall.apply_dos_protection(enabled)
 
     # --- bandwidth ----------------------------------------------------------
 

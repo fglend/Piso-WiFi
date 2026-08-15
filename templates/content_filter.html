@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+
+{% block title %}Content Filter{% endblock %}
+
+{% block content %}
+<div class="row-between mb-3">
+    <div>
+        <h1 class="mb-0">Content Filter</h1>
+        <p class="muted mb-0">Network-wide domain blocking, applied for every connected device.</p>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        <form action="{{ url_for('admin.toggle_content_filter_master') }}" method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            {% set filter_on = app_settings.content_filter_enabled %}
+            <div class="setting-toggle">
+                <input id="content_filter_enabled" name="content_filter_enabled" type="checkbox"
+                       value="1" {% if filter_on %}checked{% endif %}
+                       onchange="this.form.submit()">
+                <div>
+                    <label for="content_filter_enabled" class="mb-0">Enable content filter</label>
+                    <div class="muted small mt-2">
+                        Turning this off clears the active block list immediately; your saved
+                        domains below are kept and reapplied when you turn it back on.
+                    </div>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-head">
+        <h2 class="mb-0">Block a Domain</h2>
+    </div>
+    <div class="card-body">
+        <form action="{{ url_for('admin.content_filter_page') }}" method="POST" class="form-row">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <div>
+                <label for="cf-pattern">Domain</label>
+                <input id="cf-pattern" name="pattern" placeholder="example.com" required maxlength="253">
+            </div>
+            <div>
+                <label for="cf-category">Category</label>
+                <input id="cf-category" name="category" placeholder="custom" maxlength="40">
+            </div>
+            <button type="submit" class="btn btn-primary">Block Domain</button>
+        </form>
+        <p class="muted small mt-2 mb-0">
+            Blocking a domain also blocks its subdomains. Changes only take effect on the
+            network while the filter above is enabled.
+        </p>
+    </div>
+</div>
+
+<div class="card">
+    <div class="table-wrap">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Domain</th>
+                    <th>Category</th>
+                    <th>Enabled</th>
+                    <th>Added</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for entry in entries %}
+                <tr>
+                    <td><code>{{ entry.pattern }}</code></td>
+                    <td>{{ entry.category }}</td>
+                    <td>
+                        <form action="{{ url_for('admin.toggle_content_filter_entry') }}" method="POST" class="mb-0">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <input type="hidden" name="entry_id" value="{{ entry.id }}">
+                            <input type="hidden" name="enabled" value="{{ '0' if entry.enabled else '1' }}">
+                            <button type="submit" class="btn btn-ghost btn-sm">
+                                {{ 'On' if entry.enabled else 'Off' }}
+                            </button>
+                        </form>
+                    </td>
+                    <td>{{ entry.added_at }}</td>
+                    <td class="text-end">
+                        <form action="{{ url_for('admin.delete_content_filter_entry') }}" method="POST" class="mb-0">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <input type="hidden" name="entry_id" value="{{ entry.id }}">
+                            <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="5" class="text-center muted">No blocked domains yet</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

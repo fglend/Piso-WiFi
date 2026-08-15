@@ -1,3 +1,4 @@
+import datetime as dt
 import logging
 import os
 import re
@@ -207,6 +208,48 @@ class UserManager:
                     (mac_address, disconnected_at DESC, id DESC)
             ''')
 
+            # Admin action audit trail: login attempts, device restrictions,
+            # settings/security toggles. Append-only, never mutated.
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    action TEXT NOT NULL,
+                    actor_ip TEXT DEFAULT '',
+                    target TEXT DEFAULT '',
+                    detail TEXT DEFAULT ''
+                )
+            ''')
+            c.execute('''
+                CREATE INDEX IF NOT EXISTS idx_audit_log_ts ON audit_log (ts DESC)
+            ''')
+            c.execute('''
+                CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log (action)
+            ''')
+
+            # File integrity baseline: SHA-256 of tracked source files as of
+            # the last "Set/Update baseline" admin action.
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS file_integrity_baseline (
+                    path TEXT PRIMARY KEY,
+                    sha256 TEXT NOT NULL,
+                    baselined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+
+            # Network-wide DNS blocklist entries (category presets + custom
+            # domains). Rendered into a dnsmasq drop-in file; not per-device.
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS site_blocklist (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    pattern TEXT NOT NULL,
+                    category TEXT NOT NULL DEFAULT 'custom',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(pattern)
+                )
+            ''')
+
             # The dashboard polls revenue on a timer and the history view sorts
             # by recency; without these both full-scan a table that grows with
             # every coin inserted.
@@ -239,6 +282,14 @@ class UserManager:
                 'INTEGER NOT NULL DEFAULT 0')
             self._add_column_if_missing(
                 c, 'users', 'paused', 'INTEGER NOT NULL DEFAULT 0')
+
+            # Manual admin restriction, independent of the balance-based
+            # block/unblock cycle (e.g. "kick this device off, regardless of
+            # how much time it has left").
+            self._add_column_if_missing(
+                c, 'users', 'is_restricted', 'INTEGER NOT NULL DEFAULT 0')
+            self._add_column_if_missing(c, 'users', 'restricted_reason', 'TEXT')
+            self._add_column_if_missing(c, 'users', 'restricted_at', 'TIMESTAMP')
 
             # Seed plans
             c.execute('''INSERT OR IGNORE INTO plans (name, download_kbps, upload_kbps)
@@ -475,6 +526,160 @@ class UserManager:
                         updated_at = CURRENT_TIMESTAMP
                 ''', (key, str(value)))
             out.result = True
+        return out.result
+
+    # --- audit log -----------------------------------------------------------
+
+    def log_audit(self, action, target='', detail='', actor_ip=''):
+        """Append one admin-action record. Best-effort: a logging failure
+        must never block the action it is recording."""
+        with self._with_conn('Recording audit log entry',
+                             default=False) as (conn, out):
+            conn.execute('''
+                INSERT INTO audit_log (action, actor_ip, target, detail)
+                VALUES (?, ?, ?, ?)
+            ''', (action, actor_ip, target, detail))
+            out.result = True
+        return out.result
+
+    def get_audit_log(self, limit=200, action=None, start_date=None, end_date=None):
+        """Recent audit entries, optionally filtered by action and/or an
+        inclusive local-date range (same convention as get_sales_report)."""
+        with self._with_conn('Loading audit log', default=[]) as (conn, out):
+            clauses, params = [], []
+            if action:
+                clauses.append('action = ?')
+                params.append(action)
+            if start_date and end_date:
+                clauses.append("date(ts, 'localtime') BETWEEN ? AND ?")
+                params.extend([start_date, end_date])
+            where = ('WHERE ' + ' AND '.join(clauses)) if clauses else ''
+            rows = conn.execute(f'''
+                SELECT id, datetime(ts, 'localtime') AS ts, action, actor_ip,
+                       target, detail
+                FROM audit_log
+                {where}
+                ORDER BY ts DESC, id DESC
+                LIMIT ?
+            ''', (*params, limit)).fetchall()
+            out.result = [dict(row) for row in rows]
+        return out.result
+
+    # --- manual device restriction ---------------------------------------------
+
+    def restrict_device(self, mac_address, reason=''):
+        """Flag a device as manually restricted, independent of its balance.
+        Creates the user row if the MAC has never been seen so a not-yet-paid
+        device can still be pre-emptively blocked."""
+        with self._with_conn('Restricting device', default=False) as (conn, out):
+            conn.execute('''
+                INSERT INTO users (mac_address, is_restricted, restricted_reason,
+                                    restricted_at)
+                VALUES (?, 1, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(mac_address) DO UPDATE SET
+                    is_restricted = 1,
+                    restricted_reason = excluded.restricted_reason,
+                    restricted_at = CURRENT_TIMESTAMP
+            ''', (mac_address, reason))
+            out.result = True
+        return out.result
+
+    def unrestrict_device(self, mac_address):
+        """Clear the manual restriction flag. Does not touch time_balance -
+        whether the device actually regains access is still governed by the
+        normal balance-based block/unblock policy."""
+        with self._with_conn('Unrestricting device', default=False) as (conn, out):
+            cursor = conn.execute('''
+                UPDATE users SET is_restricted = 0, restricted_reason = NULL
+                WHERE mac_address = ?
+            ''', (mac_address,))
+            out.result = cursor.rowcount > 0
+        return out.result
+
+    def get_restricted_devices(self):
+        with self._with_conn('Listing restricted devices',
+                             default=[]) as (conn, out):
+            rows = conn.execute('''
+                SELECT mac_address, time_balance, restricted_reason,
+                       datetime(restricted_at, 'localtime') AS restricted_at
+                FROM users
+                WHERE is_restricted = 1
+                ORDER BY restricted_at DESC
+            ''').fetchall()
+            out.result = [dict(row) for row in rows]
+        return out.result
+
+    def is_restricted(self, mac_address):
+        with self._with_conn('Checking device restriction',
+                             default=False) as (conn, out):
+            row = conn.execute(
+                'SELECT is_restricted FROM users WHERE mac_address = ?',
+                (mac_address,)).fetchone()
+            out.result = bool(row and row['is_restricted'])
+        return out.result
+
+    # --- file integrity baseline ----------------------------------------------
+
+    def set_integrity_baseline(self, hashes):
+        """Replace the stored baseline with {relative_path: sha256, ...}."""
+        with self._with_conn('Saving integrity baseline',
+                             default=False) as (conn, out):
+            conn.execute('DELETE FROM file_integrity_baseline')
+            conn.executemany('''
+                INSERT INTO file_integrity_baseline (path, sha256)
+                VALUES (?, ?)
+            ''', sorted(hashes.items()))
+            out.result = True
+        return out.result
+
+    def get_integrity_baseline(self):
+        with self._with_conn('Loading integrity baseline',
+                             default={}) as (conn, out):
+            rows = conn.execute(
+                'SELECT path, sha256 FROM file_integrity_baseline').fetchall()
+            out.result = {row['path']: row['sha256'] for row in rows}
+        return out.result
+
+    # --- site content blocklist ------------------------------------------------
+
+    def get_blocklist(self):
+        with self._with_conn('Listing content blocklist',
+                             default=[]) as (conn, out):
+            rows = conn.execute('''
+                SELECT id, pattern, category, enabled,
+                       datetime(added_at, 'localtime') AS added_at
+                FROM site_blocklist
+                ORDER BY category, pattern
+            ''').fetchall()
+            out.result = [dict(row) for row in rows]
+        return out.result
+
+    def add_blocklist_entry(self, pattern, category='custom'):
+        with self._with_conn('Adding blocklist entry',
+                             default=False) as (conn, out):
+            conn.execute('''
+                INSERT INTO site_blocklist (pattern, category)
+                VALUES (?, ?)
+                ON CONFLICT(pattern) DO UPDATE SET category = excluded.category
+            ''', (pattern, category))
+            out.result = True
+        return out.result
+
+    def set_blocklist_entry_enabled(self, entry_id, enabled):
+        with self._with_conn('Toggling blocklist entry',
+                             default=False) as (conn, out):
+            cursor = conn.execute(
+                'UPDATE site_blocklist SET enabled = ? WHERE id = ?',
+                (1 if enabled else 0, entry_id))
+            out.result = cursor.rowcount > 0
+        return out.result
+
+    def delete_blocklist_entry(self, entry_id):
+        with self._with_conn('Deleting blocklist entry',
+                             default=False) as (conn, out):
+            cursor = conn.execute(
+                'DELETE FROM site_blocklist WHERE id = ?', (entry_id,))
+            out.result = cursor.rowcount > 0
         return out.result
 
     # --- advertisement posts -----------------------------------------------------
@@ -1400,6 +1605,53 @@ class UserManager:
                 LIMIT ?
             ''', (*self._range_params(start_date, end_date), limit)).fetchall()
             out.result = [dict(row) for row in rows]
+        return out.result
+
+    def _net_revenue(self, conn, start_date, end_date):
+        row = conn.execute(f'''
+            SELECT COALESCE(SUM(t.amount), 0) AS net
+            FROM transactions t
+            {self._range_clause()}
+        ''', self._range_params(start_date, end_date)).fetchone()
+        return float(row['net'])
+
+    def get_earnings_summary(self):
+        """Today/7-day/30-day/365-day revenue, each paired with the prior
+        equivalent period and the percent change between them - the
+        dashboard/report comparison cards on the Reports page."""
+        today = dt.date.today()
+        windows = {
+            'today': 0,
+            '7d': 6,
+            '30d': 29,
+            '365d': 364,
+        }
+        empty = {
+            key: {'current': 0.0, 'previous': 0.0, 'pct_change': None}
+            for key in windows
+        }
+        with self._with_conn('Building earnings summary',
+                             on_error=lambda: dict(empty)) as (conn, out):
+            summary = {}
+            for key, days_back in windows.items():
+                current_start = today - dt.timedelta(days=days_back)
+                current = self._net_revenue(conn, current_start.isoformat(),
+                                            today.isoformat())
+                previous_end = current_start - dt.timedelta(days=1)
+                previous_start = previous_end - dt.timedelta(days=days_back)
+                previous = self._net_revenue(conn, previous_start.isoformat(),
+                                             previous_end.isoformat())
+                if previous:
+                    pct_change = round((current - previous) / abs(previous) * 100, 1)
+                elif current:
+                    pct_change = None  # no baseline to compare against
+                else:
+                    pct_change = 0.0
+                summary[key] = {
+                    'current': current, 'previous': previous,
+                    'pct_change': pct_change,
+                }
+            out.result = summary
         return out.result
 
     def reset_revenue(self):

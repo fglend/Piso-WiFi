@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}Audit Log{% endblock %}
+
+{% block content %}
+{% set preset_labels = {'today': 'Today', '7d': 'Last 7 days',
+                        '30d': 'Last 30 days', '90d': 'Last 90 days'} %}
+<div class="row-between mb-3">
+    <div>
+        <h1 class="mb-0">Audit Log</h1>
+        <p class="muted mb-0">{{ start }} to {{ end }} &middot; login attempts and admin actions</p>
+    </div>
+    <a class="btn btn-primary btn-sm"
+       href="{{ url_for('admin.export_audit_log_csv', start=start, end=end, preset=preset, action=action) }}">
+        Export CSV
+    </a>
+</div>
+
+<section class="card mb-4">
+    <div class="card-body">
+        <div class="preset-row mb-3">
+            {% for name in presets %}
+            <a class="btn btn-sm {% if preset == name %}btn-primary{% else %}btn-ghost{% endif %}"
+               href="{{ url_for('admin.audit_log', preset=name, action=action) }}">
+                {{ preset_labels.get(name, name) }}
+            </a>
+            {% endfor %}
+        </div>
+        <form method="GET" action="{{ url_for('admin.audit_log') }}" class="form-row">
+            <label class="visually-hidden" for="start">Start date</label>
+            <input type="date" id="start" name="start" value="{{ start }}" required>
+            <label class="visually-hidden" for="end">End date</label>
+            <input type="date" id="end" name="end" value="{{ end }}" required>
+            <label class="visually-hidden" for="action">Action</label>
+            <input id="action" name="action" placeholder="filter by action (e.g. login_failed)"
+                   value="{{ action or '' }}">
+            <button type="submit" class="btn btn-primary btn-sm">Apply</button>
+        </form>
+    </div>
+</section>
+
+<div class="card">
+    <div class="table-wrap">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th>Action</th>
+                    <th>Actor IP</th>
+                    <th>Target</th>
+                    <th>Detail</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for entry in entries %}
+                <tr>
+                    <td>{{ entry.ts }}</td>
+                    <td><code>{{ entry.action }}</code></td>
+                    <td>{{ entry.actor_ip or '-' }}</td>
+                    <td>{{ entry.target or '-' }}</td>
+                    <td>{{ entry.detail or '-' }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="5" class="text-center muted">No audit entries in this range</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
