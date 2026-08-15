@@ -766,9 +766,9 @@ def test_tethering_block_is_off_by_default():
 
     # The chain is still created and flushed so a previous run is undone,
     # but nothing is dropped and no jump is installed.
-    assert ['iptables', '-t', 'filter', '-F', 'PISOWIFI_TETHER'] in commands
+    assert ['iptables', '-t', 'mangle', '-F', 'PISOWIFI_TETHER'] in commands
     assert not [c for c in commands if '--ttl-eq' in c]
-    assert ['iptables', '-I', 'FORWARD', '1',
+    assert ['iptables', '-t', 'mangle', '-I', 'PREROUTING', '1',
             '-i', 'eth0', '-j', 'PISOWIFI_TETHER'] not in commands
 
 
@@ -778,28 +778,28 @@ def test_tethering_block_drops_decremented_ttls_when_enabled():
     commands = _setup_commands(firewall)
 
     for ttl in (63, 127):
-        assert ['iptables', '-A', 'PISOWIFI_TETHER', '-m', 'ttl',
+        assert ['iptables', '-t', 'mangle', '-A', 'PISOWIFI_TETHER', '-m', 'ttl',
                 '--ttl-eq', str(ttl), '-j', 'DROP'] in commands
 
 
-def test_tether_jump_sits_above_the_pisowifi_jump():
-    """The whole feature depends on this ordering.
+def test_tether_check_runs_in_mangle_prerouting_not_filter_forward():
+    """The whole feature depends on running before the kernel's own TTL hit.
 
-    allow_mac() inserts each paying device's ACCEPT at position 1 of PISOWIFI,
-    so a TTL check inside that chain would never be reached for a paying MAC -
-    which is exactly the device doing the sharing. Both jumps use
-    '-I FORWARD 1', so the one issued LAST ends up on top.
+    ip_forward() decrements a packet's TTL before the filter/FORWARD hook
+    ever sees it, so a filter/FORWARD match on 63/127 would catch every
+    forwarded packet - direct customers included, not just tethered ones.
+    mangle/PREROUTING runs before the routing decision (and that decrement),
+    so it sees the TTL exactly as the client's OS sent it.
     """
     firewall = Firewall('eth0', 'eth1', '192.168.4.1', block_tethering=True)
 
     commands = _setup_commands(firewall)
-    tether_jump = ['iptables', '-I', 'FORWARD', '1',
+    tether_jump = ['iptables', '-t', 'mangle', '-I', 'PREROUTING', '1',
                    '-i', 'eth0', '-j', 'PISOWIFI_TETHER']
-    pisowifi_jump = ['iptables', '-I', 'FORWARD', '1',
-                     '-i', 'eth0', '-j', 'PISOWIFI']
 
-    assert tether_jump in commands and pisowifi_jump in commands
-    assert commands.index(tether_jump) > commands.index(pisowifi_jump)
+    assert tether_jump in commands
+    assert not [c for c in commands
+                if 'PISOWIFI_TETHER' in c and 'FORWARD' in c]
 
 
 def test_tether_rules_are_added_after_the_chain_jump():
@@ -808,7 +808,7 @@ def test_tether_rules_are_added_after_the_chain_jump():
     firewall = Firewall('eth0', 'eth1', '192.168.4.1', block_tethering=True)
 
     commands = _setup_commands(firewall)
-    flush = commands.index(['iptables', '-t', 'filter', '-F', 'PISOWIFI_TETHER'])
+    flush = commands.index(['iptables', '-t', 'mangle', '-F', 'PISOWIFI_TETHER'])
     first_drop = min(i for i, c in enumerate(commands) if '--ttl-eq' in c)
 
     assert flush < first_drop
@@ -821,7 +821,7 @@ def test_custom_ttl_list_is_honoured():
     commands = _setup_commands(firewall)
 
     assert firewall.tethering_ttls == [63, 254]
-    assert ['iptables', '-A', 'PISOWIFI_TETHER', '-m', 'ttl',
+    assert ['iptables', '-t', 'mangle', '-A', 'PISOWIFI_TETHER', '-m', 'ttl',
             '--ttl-eq', '254', '-j', 'DROP'] in commands
     assert not [c for c in commands if '127' in c and '--ttl-eq' in c]
 
@@ -845,7 +845,7 @@ def test_ipv6_hop_limit_is_blocked_too():
 
     # Only v4 forwarding is configured today, but a v4-only rule would leave
     # the entire bypass open the moment the operator enables IPv6.
-    assert ['ip6tables', '-A', 'PISOWIFI_TETHER', '-m', 'hl',
+    assert ['ip6tables', '-t', 'mangle', '-A', 'PISOWIFI_TETHER', '-m', 'hl',
             '--hl-eq', '63', '-j', 'DROP'] in commands
 
 
@@ -856,7 +856,7 @@ def test_missing_ip6tables_does_not_break_setup():
 
     assert not [c for c in commands if c and c[0] == 'ip6tables']
     # v4 protection still applies.
-    assert ['iptables', '-A', 'PISOWIFI_TETHER', '-m', 'ttl',
+    assert ['iptables', '-t', 'mangle', '-A', 'PISOWIFI_TETHER', '-m', 'ttl',
             '--ttl-eq', '63', '-j', 'DROP'] in commands
 
 

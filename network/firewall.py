@@ -141,8 +141,6 @@ class Firewall:
 
         self._add_static_rules()
         self._add_game_marking()
-        # Last, so its FORWARD jump lands above the PISOWIFI jump inserted
-        # earlier in this method. See _add_tether_rules for why that matters.
         self._add_tether_rules()
         self._add_ssh_whitelist_rules()
         self._add_dos_rules()
@@ -284,28 +282,32 @@ class Firewall:
         the MAC match in allow_mac(). What they cannot hide is the extra hop:
         the TTL has already been decremented once.
 
-        This lives in its own chain jumped from FORWARD *above* the PISOWIFI
-        jump, not inside PISOWIFI. allow_mac() inserts each paying device's
-        ACCEPT at position 1 of that chain, so a check placed inside it would
-        never be reached for a paying MAC - and the paying MAC is precisely the
-        one doing the sharing.
+        This has to run in mangle/PREROUTING, not filter/FORWARD. The kernel's
+        ip_forward() decrements a packet's TTL *before* invoking the FORWARD
+        netfilter hook, so by the time a filter/FORWARD rule sees it, every
+        forwarded packet - direct customer or tethered - has already lost one
+        TTL to the Pi's own hop. A filter/FORWARD match on 63/127 would catch
+        everybody, not just tethered traffic. PREROUTING runs before the
+        routing decision, hence before that decrement, so the TTL it sees is
+        exactly what the client's OS sent: 64/128 direct, 63/127 only for a
+        device already one hop behind something else.
 
         Best-effort like the game lane: never take the gateway down over it.
         """
         try:
-            run_cmd(['iptables', '-t', 'filter', '-N', TETHER_CHAIN],
+            run_cmd(['iptables', '-t', 'mangle', '-N', TETHER_CHAIN],
                     ignore_errors=True)
-            run_cmd(['iptables', '-t', 'filter', '-F', TETHER_CHAIN])
-            jump = ['FORWARD', '-i', self.ap_interface, '-j', TETHER_CHAIN]
-            run_cmd(['iptables', '-D', *jump], ignore_errors=True)
+            run_cmd(['iptables', '-t', 'mangle', '-F', TETHER_CHAIN])
+            jump = ['PREROUTING', '-i', self.ap_interface, '-j', TETHER_CHAIN]
+            run_cmd(['iptables', '-t', 'mangle', '-D', *jump], ignore_errors=True)
             self._clear_tether_rules_v6()
 
             if not self.block_tethering or not self.tethering_ttls:
                 return
 
-            run_cmd(['iptables', '-I', 'FORWARD', '1', *jump[1:]])
+            run_cmd(['iptables', '-t', 'mangle', '-I', 'PREROUTING', '1', *jump[1:]])
             for ttl in self.tethering_ttls:
-                run_cmd(['iptables', '-A', TETHER_CHAIN, '-m', 'ttl',
+                run_cmd(['iptables', '-t', 'mangle', '-A', TETHER_CHAIN, '-m', 'ttl',
                          '--ttl-eq', str(ttl), '-j', 'DROP'])
             self._add_tether_rules_v6()
             self.logger.info(
@@ -319,9 +321,9 @@ class Firewall:
         """Remove any v6 tether rules from a previous run."""
         if not command_exists('ip6tables'):
             return
-        run_cmd(['ip6tables', '-N', TETHER_CHAIN], ignore_errors=True)
-        run_cmd(['ip6tables', '-F', TETHER_CHAIN], ignore_errors=True)
-        run_cmd(['ip6tables', '-D', 'FORWARD', '-i', self.ap_interface,
+        run_cmd(['ip6tables', '-t', 'mangle', '-N', TETHER_CHAIN], ignore_errors=True)
+        run_cmd(['ip6tables', '-t', 'mangle', '-F', TETHER_CHAIN], ignore_errors=True)
+        run_cmd(['ip6tables', '-t', 'mangle', '-D', 'PREROUTING', '-i', self.ap_interface,
                  '-j', TETHER_CHAIN], ignore_errors=True)
 
     def _add_tether_rules_v6(self):
@@ -334,10 +336,10 @@ class Firewall:
         if not command_exists('ip6tables'):
             self.logger.debug("ip6tables absent, skipping v6 tethering block")
             return
-        run_cmd(['ip6tables', '-I', 'FORWARD', '1', '-i', self.ap_interface,
+        run_cmd(['ip6tables', '-t', 'mangle', '-I', 'PREROUTING', '1', '-i', self.ap_interface,
                  '-j', TETHER_CHAIN], ignore_errors=True)
         for ttl in self.tethering_ttls:
-            run_cmd(['ip6tables', '-A', TETHER_CHAIN, '-m', 'hl',
+            run_cmd(['ip6tables', '-t', 'mangle', '-A', TETHER_CHAIN, '-m', 'hl',
                      '--hl-eq', str(ttl), '-j', 'DROP'], ignore_errors=True)
 
     def _add_game_marking(self):
