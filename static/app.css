@@ -195,7 +195,10 @@ a { color: var(--accent-strong); }
   gap: 0.25rem;
   padding: 0 1.25rem;
   border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  scrollbar-width: none;
 }
+.device-tabs::-webkit-scrollbar { display: none; }
 .device-tab {
   appearance: none;
   border: 0;
@@ -206,6 +209,8 @@ a { color: var(--accent-strong); }
   font: inherit;
   font-weight: 700;
   padding: 0.75rem 0.9rem;
+  white-space: nowrap;
+  flex: none;
 }
 .device-tab:hover,
 .device-tab:focus-visible { color: var(--text); }
