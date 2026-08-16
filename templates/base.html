@@ -9,7 +9,13 @@
 </head>
 <body>
     <div class="app-shell">
-        <aside class="sidebar">
+        <div class="mobile-topbar">
+            <button type="button" class="sidebar-toggle" id="sidebarToggle"
+                    aria-expanded="false" aria-controls="sidebar" aria-label="Open navigation menu">
+                <span class="sidebar-toggle-bar"></span>
+                <span class="sidebar-toggle-bar"></span>
+                <span class="sidebar-toggle-bar"></span>
+            </button>
             <a class="brand" href="/">
                 {% if theme.logo %}
                 <img class="brand-logo"
@@ -18,6 +24,20 @@
                 {% else %}
                 <span class="brand-dot"></span>
                 {% endif %}PISO WIFI</a>
+        </div>
+        <div class="sidebar-backdrop" id="sidebarBackdrop" hidden></div>
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-head">
+                <a class="brand" href="/">
+                    {% if theme.logo %}
+                    <img class="brand-logo"
+                         src="{{ url_for('static', filename='uploads/' ~ theme.logo) }}"
+                         alt="">
+                    {% else %}
+                    <span class="brand-dot"></span>
+                    {% endif %}PISO WIFI</a>
+                <button type="button" class="sidebar-close" id="sidebarClose" aria-label="Close navigation menu">&times;</button>
+            </div>
 
             {% if session.get('is_admin') %}
             <nav class="sidebar-nav" aria-label="Admin navigation">
@@ -77,5 +97,50 @@
             </main>
         </div>
     </div>
+    <script>
+    (function () {
+        var toggle = document.getElementById('sidebarToggle');
+        var sidebar = document.getElementById('sidebar');
+        var backdrop = document.getElementById('sidebarBackdrop');
+        var closeBtn = document.getElementById('sidebarClose');
+        if (!toggle || !sidebar || !backdrop) return;
+
+        function openDrawer() {
+            sidebar.classList.add('is-open');
+            backdrop.hidden = false;
+            toggle.setAttribute('aria-expanded', 'true');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeDrawer() {
+            sidebar.classList.remove('is-open');
+            backdrop.hidden = true;
+            toggle.setAttribute('aria-expanded', 'false');
+            document.body.style.overflow = '';
+        }
+
+        toggle.addEventListener('click', function () {
+            if (sidebar.classList.contains('is-open')) {
+                closeDrawer();
+            } else {
+                openDrawer();
+            }
+        });
+        if (closeBtn) closeBtn.addEventListener('click', closeDrawer);
+        backdrop.addEventListener('click', closeDrawer);
+        // Tapping a nav link should also dismiss the drawer, not just navigate.
+        Array.prototype.slice.call(sidebar.querySelectorAll('a')).forEach(function (link) {
+            link.addEventListener('click', closeDrawer);
+        });
+        document.addEventListener('keydown', function (event) {
+            if (event.key === 'Escape') closeDrawer();
+        });
+        // A resize back to desktop width should not leave the drawer state
+        // (and the body scroll lock) stuck on from a phone-width session.
+        window.addEventListener('resize', function () {
+            if (window.innerWidth > 780) closeDrawer();
+        });
+    })();
+    </script>
 </body>
 </html>

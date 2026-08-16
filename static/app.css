@@ -143,29 +143,89 @@ a { color: var(--accent-strong); }
 }
 .sidebar-logout:hover { background: var(--surface-2); color: var(--text); }
 
+/* Mobile topbar (hamburger + brand) and the sidebar-close button inside the
+   drawer only make sense once the sidebar becomes an off-canvas panel. */
+.mobile-topbar, .sidebar-toggle, .sidebar-close, .sidebar-backdrop { display: none; }
+
 @media (max-width: 780px) {
-  .app-shell { flex-direction: column; }
-  .sidebar {
-    width: auto;
-    flex: 0 0 auto;
-    min-height: 0;
-    position: static;
-    border-right: 0;
-    border-bottom: 1px solid var(--border);
-    flex-direction: row;
+  .app-shell { display: block; min-height: 0; }
+
+  .mobile-topbar {
     align-items: center;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex;
     gap: 0.75rem;
-    overflow-x: auto;
-    scrollbar-width: none;
+    padding: 0.7rem 1rem;
+    position: sticky;
+    top: 0;
+    z-index: 80;
   }
-  .sidebar::-webkit-scrollbar { display: none; }
-  /* Group labels take too much horizontal room on a phone-width strip;
-     the links themselves stay reachable in one flat scrollable row. */
-  .sidebar-group-title { display: none; }
-  .sidebar-nav { flex-direction: row; gap: 0.25rem; }
-  .sidebar-group { flex-direction: row; gap: 0.25rem; }
-  .sidebar-nav a, .sidebar-logout { white-space: nowrap; }
-  .sidebar-logout { border-top: 0; padding-top: 0.5rem; }
+
+  .sidebar-toggle {
+    align-items: center;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    display: inline-flex;
+    flex: none;
+    flex-direction: column;
+    gap: 4px;
+    height: 2.4rem;
+    justify-content: center;
+    padding: 0;
+    width: 2.4rem;
+  }
+  .sidebar-toggle-bar {
+    background: var(--text);
+    border-radius: 2px;
+    display: block;
+    height: 2px;
+    width: 1.1rem;
+  }
+
+  .sidebar {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    box-shadow: var(--shadow);
+    flex-direction: column;
+    height: 100dvh;
+    left: 0;
+    max-width: 82vw;
+    min-height: 0;
+    overflow-y: auto;
+    position: fixed;
+    top: 0;
+    transform: translateX(-100%);
+    transition: transform 0.22s ease;
+    width: 280px;
+    z-index: 100;
+  }
+  .sidebar.is-open { transform: translateX(0); }
+
+  .sidebar-close {
+    background: transparent;
+    border: 0;
+    color: var(--muted);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 1.5rem;
+    line-height: 1;
+    margin-left: auto;
+    padding: 0.2rem 0.4rem;
+  }
+  .sidebar-head { align-items: center; display: flex; }
+
+  .sidebar-backdrop {
+    background: rgba(0, 0, 0, 0.5);
+    display: block;
+    inset: 0;
+    position: fixed;
+    z-index: 90;
+  }
+  .sidebar-backdrop[hidden] { display: none; }
+
   .app-main .container { padding: 1.25rem 1rem 3rem; }
 }
 
