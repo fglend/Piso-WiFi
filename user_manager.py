@@ -125,6 +125,24 @@ class UserManager:
                 )
             ''')
 
+            # Per-device data usage samples. Each row is a DELTA observed since
+            # the previous sample (not a running total) - "usage today" is a
+            # SUM() over this table, the same idiom get_revenue_summary uses
+            # for transactions.
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS usage_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    mac_address TEXT NOT NULL,
+                    download_bytes INTEGER NOT NULL DEFAULT 0,
+                    upload_bytes INTEGER NOT NULL DEFAULT 0,
+                    recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            c.execute('''
+                CREATE INDEX IF NOT EXISTS idx_usage_logs_recorded_at
+                ON usage_logs (recorded_at)
+            ''')
+
             c.execute('''
                 CREATE TABLE IF NOT EXISTS plans (
                     name TEXT PRIMARY KEY,
@@ -290,6 +308,13 @@ class UserManager:
                 c, 'users', 'is_restricted', 'INTEGER NOT NULL DEFAULT 0')
             self._add_column_if_missing(c, 'users', 'restricted_reason', 'TEXT')
             self._add_column_if_missing(c, 'users', 'restricted_at', 'TIMESTAMP')
+
+            # Running lifetime totals, kept in sync with usage_logs inserts so
+            # per-device usage can be read without summing the whole log table.
+            self._add_column_if_missing(
+                c, 'users', 'download_bytes', 'INTEGER NOT NULL DEFAULT 0')
+            self._add_column_if_missing(
+                c, 'users', 'upload_bytes', 'INTEGER NOT NULL DEFAULT 0')
 
             # Seed plans
             c.execute('''INSERT OR IGNORE INTO plans (name, download_kbps, upload_kbps)
@@ -1120,7 +1145,8 @@ class UserManager:
             placeholders = ','.join('?' for _ in macs)
             rows = conn.execute(f'''
                 SELECT mac_address, time_balance, status, download_limit,
-                       upload_limit, plan, upgrade_requested
+                       upload_limit, plan, upgrade_requested,
+                       paused, download_bytes, upload_bytes
                 FROM users WHERE mac_address IN ({placeholders})
             ''', macs).fetchall()
             out.result = {
@@ -1150,7 +1176,7 @@ class UserManager:
                              default=[]) as (conn, out):
             rows = conn.execute('''
                 SELECT u.mac_address, u.time_balance, u.plan, u.paused,
-                       u.pausable,
+                       u.pausable, u.download_bytes, u.upload_bytes,
                        datetime(u.expires_at, 'localtime') AS expires_at,
                        dc.hostname, dc.ip_address,
                        datetime(dc.last_seen_at, 'localtime') AS last_seen_at
@@ -1474,6 +1500,48 @@ class UserManager:
                 'day_adjustments': float(row['day_adjustments']),
                 'week_adjustments': float(row['week_adjustments']),
                 'month_adjustments': float(row['month_adjustments']),
+            }
+        return out.result
+
+    # --- data usage -------------------------------------------------------
+
+    def record_usage(self, mac_address, download_delta, upload_delta):
+        """Log one usage sample (a delta since the previous sample, not a
+        running total) and fold it into the device's lifetime counters."""
+        if download_delta <= 0 and upload_delta <= 0:
+            return True
+        with self._with_conn('Recording usage sample',
+                             default=False) as (conn, out):
+            conn.execute('''
+                INSERT INTO usage_logs (mac_address, download_bytes, upload_bytes)
+                VALUES (?, ?, ?)
+            ''', (mac_address, download_delta, upload_delta))
+            conn.execute('''
+                UPDATE users
+                SET download_bytes = download_bytes + ?,
+                    upload_bytes = upload_bytes + ?
+                WHERE mac_address = ?
+            ''', (download_delta, upload_delta, mac_address))
+            out.result = True
+        return out.result
+
+    def get_usage_today(self):
+        """Total download/upload bytes sampled network-wide since local
+        midnight, from the usage_logs delta history."""
+        with self._with_conn(
+                'Calculating usage today',
+                on_error=lambda: {'download_bytes': 0, 'upload_bytes': 0},
+        ) as (conn, out):
+            row = conn.execute('''
+                SELECT
+                    COALESCE(SUM(download_bytes), 0) AS download_bytes,
+                    COALESCE(SUM(upload_bytes), 0) AS upload_bytes
+                FROM usage_logs
+                WHERE date(recorded_at, 'localtime') = date('now', 'localtime')
+            ''').fetchone()
+            out.result = {
+                'download_bytes': int(row['download_bytes']),
+                'upload_bytes': int(row['upload_bytes']),
             }
         return out.result
 

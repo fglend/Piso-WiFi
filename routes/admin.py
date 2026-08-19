@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import time
 
 from flask import (Blueprint, Response, abort, current_app, flash, jsonify,
                    redirect, render_template, request, url_for)
@@ -79,6 +80,9 @@ def _dashboard_devices(svc):
                 'upload_limit': default_upload,
                 'plan': 'default',
                 'upgrade_requested': False,
+                'paused': False,
+                'download_bytes': 0,
+                'upload_bytes': 0,
             })
     return devices
 
@@ -108,6 +112,7 @@ def dashboard():
         ])
         plans = svc.user_manager.get_plans()
         revenue = svc.user_manager.get_revenue_summary()
+        usage_today = svc.user_manager.get_usage_today()
         disconnected_devices = svc.user_manager.get_disconnected_devices()
         # Not part of the live-refresh signature: balances tick every minute
         # and would otherwise reload the dashboard constantly.
@@ -121,6 +126,7 @@ def dashboard():
                                plans=plans,
                                minutes_per_peso=svc.settings.minutes_per_peso,
                                revenue=revenue,
+                               usage_today=usage_today,
                                health=system_info.collect(svc.settings),
                                app_settings=app_settings,
                                active_device_count=active_device_count)
@@ -136,10 +142,12 @@ def dashboard_live():
     svc.refresh_runtime_settings()
     devices = _dashboard_devices(svc)
     revenue = svc.user_manager.get_revenue_summary()
+    usage_today = svc.user_manager.get_usage_today()
     active_devices = [device for device in devices if device.get('time_balance', 0) > 0]
     disconnected_devices = svc.user_manager.get_disconnected_devices()
     return jsonify({
         'revenue': revenue,
+        'usage_today': usage_today,
         'device_count': len(devices),
         'active_device_count': len(active_devices),
         'disconnected_device_count': len(disconnected_devices),
@@ -632,6 +640,55 @@ def set_pausable():
     else:
         flash(f'{mac} can no longer pause their time', 'success')
     logger.info("Admin set pausable=%s for %s", allowed, mac)
+    return redirect(url_for('admin.dashboard'))
+
+
+@admin_bp.route('/admin/devices/pause', methods=['POST'])
+@admin_required
+def pause_device():
+    """Admin-triggered pause, e.g. a customer asks staff to hold their time
+    without using the portal button. Mirrors routes/portal.py's pause()."""
+    svc = _services()
+    mac = _form_mac()
+    if not mac:
+        return redirect(url_for('admin.dashboard'))
+    if svc.user_manager.is_paused(mac):
+        flash(f'{mac} is already paused', 'error')
+        return redirect(url_for('admin.dashboard'))
+    if not svc.user_manager.is_pausable(mac):
+        flash(f"{mac}'s pass cannot be paused", 'error')
+        return redirect(url_for('admin.dashboard'))
+    if not svc.user_manager.set_paused(mac, True):
+        flash(f'No device found for {mac}', 'error')
+        return redirect(url_for('admin.dashboard'))
+    svc.user_manager.clear_session(mac)      # freeze the deduction clock
+    svc.network_controller.block_mac(mac)    # cut internet while paused
+    svc.user_manager.log_audit(
+        'device_paused', target=mac, actor_ip=request.remote_addr or '')
+    flash(f"Paused {mac}'s time", 'success')
+    return redirect(url_for('admin.dashboard'))
+
+
+@admin_bp.route('/admin/devices/resume', methods=['POST'])
+@admin_required
+def resume_device():
+    """Mirrors routes/portal.py's resume()."""
+    svc = _services()
+    mac = _form_mac()
+    if not mac:
+        return redirect(url_for('admin.dashboard'))
+    info = svc.user_manager.get_device_info(mac)
+    if not info or info['time_balance'] <= 0:
+        flash(f'{mac} has no time left to resume', 'error')
+        return redirect(url_for('admin.dashboard'))
+    svc.user_manager.set_paused(mac, False)
+    svc.user_manager.set_last_deduction(mac, time.time())  # restart the clock now
+    svc.network_controller.unblock_mac(mac)
+    svc.network_controller.set_bandwidth_limit(
+        mac, info['download_limit'], info['upload_limit'])
+    svc.user_manager.log_audit(
+        'device_resumed', target=mac, actor_ip=request.remote_addr or '')
+    flash(f"Resumed {mac}'s time", 'success')
     return redirect(url_for('admin.dashboard'))
 
 

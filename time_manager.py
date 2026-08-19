@@ -17,6 +17,10 @@ class TimeManager:
     # Offline devices are only billable in whole minutes, so sweeping them on
     # every few-second poll would just re-run the same queries for nothing.
     OFFLINE_SWEEP_SECONDS = 60
+    # Data usage is sampled from tc counters (a shell-out per connected
+    # device), so it runs on the same relaxed cadence as the offline sweep
+    # rather than every check_interval tick.
+    USAGE_SAMPLE_SECONDS = 60
 
     def __init__(self, user_manager, network_controller, settings):
         self.user_manager = user_manager
@@ -29,6 +33,10 @@ class TimeManager:
         self._next_purge_at = 0.0
         self._next_offline_sweep_at = 0.0
         self._next_expiry_sync_at = 0.0
+        self._next_usage_sample_at = 0.0
+        # mac -> last observed cumulative {'download_bytes', 'upload_bytes'},
+        # so each sample can be turned into a delta for usage_logs.
+        self._usage_baseline = {}
         # MACs on a wall-clock duration pass: their balance is derived from
         # expires_at, so the elapsed-time meter must not also charge them.
         self._expiry_macs = frozenset()
@@ -95,6 +103,8 @@ class TimeManager:
                 except Exception as e:
                     self.logger.error(f"Error checking balance for {mac}: {e}")
 
+            self._sample_usage(connected_macs, now)
+
             if self.pause_on_disconnect:
                 # Stop the clock for devices that left so their balance freezes
                 for user in self.user_manager.get_active_users():
@@ -107,6 +117,47 @@ class TimeManager:
                 self._meter_offline_devices(connected_macs, now)
         except Exception as e:
             self.logger.error(f"Error in check_and_deduct_time: {e}")
+
+    def _sample_usage(self, connected_macs, now):
+        """Fold each connected device's tc byte counters into usage_logs.
+
+        Only connected devices carry a live QoS class, so only they have
+        counters worth reading. A device's first sample after this process
+        started (or after it reconnects with no baseline yet) just records
+        the baseline - crediting the full cumulative value as one delta
+        would double-count traffic already reflected in earlier totals.
+        """
+        if now < self._next_usage_sample_at:
+            return
+        self._next_usage_sample_at = now + self.USAGE_SAMPLE_SECONDS
+        for mac in connected_macs:
+            try:
+                usage = self.network_controller.get_usage(mac)
+            except Exception as e:
+                self.logger.error(f"Error reading usage for {mac}: {e}")
+                continue
+            if not usage:
+                continue
+            download_total = usage.get('download_bytes', 0)
+            upload_total = usage.get('upload_bytes', 0)
+            baseline = self._usage_baseline.get(mac)
+            if baseline is None:
+                self._usage_baseline[mac] = {
+                    'download_bytes': download_total, 'upload_bytes': upload_total}
+                continue
+            download_delta = download_total - baseline['download_bytes']
+            upload_delta = upload_total - baseline['upload_bytes']
+            if download_delta < 0 or upload_delta < 0:
+                # Counters moved backwards - resync rather than log a bogus
+                # negative delta.
+                download_delta = upload_delta = 0
+            if download_delta or upload_delta:
+                try:
+                    self.user_manager.record_usage(mac, download_delta, upload_delta)
+                except Exception as e:
+                    self.logger.error(f"Error recording usage for {mac}: {e}")
+            self._usage_baseline[mac] = {
+                'download_bytes': download_total, 'upload_bytes': upload_total}
 
     def _purge_stale_devices(self):
         """Drop spent, long-idle device rows and trim the history tables.

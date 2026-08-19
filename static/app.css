@@ -1219,13 +1219,53 @@ body.portal-app {
 
 .pa-primary:disabled { cursor: not-allowed; opacity: 0.55; }
 
+/* Pulled out of the utility grid on purpose: buried among four same-weight
+   tiles this button went unnoticed, so it gets its own full-width row with a
+   color and border no grid tile uses, plus a slow pulse to draw the eye. */
+.pa-pause-form { margin: 0; }
+
+.pa-pause-cta {
+  align-items: center;
+  background: var(--warn-soft);
+  border: 2px solid var(--warn);
+  border-radius: var(--radius);
+  color: var(--warn);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  font-size: 0.95rem;
+  font-weight: 800;
+  gap: 0.5rem;
+  justify-content: center;
+  letter-spacing: 0.01em;
+  padding: clamp(0.65rem, 2vh, 0.9rem);
+  width: 100%;
+}
+.pa-pause-cta:active { filter: brightness(0.96); }
+.pa-pause-cta-icon { font-size: 0.8em; }
+
+.pa-pause-cta.is-resume {
+  background: var(--ok-soft);
+  border-color: var(--ok);
+  color: var(--ok);
+  animation: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .pa-pause-cta:not(.is-resume) {
+    animation: pa-pause-pulse 2.4s ease-in-out infinite;
+  }
+}
+@keyframes pa-pause-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.35); }
+  50% { box-shadow: 0 0 0 7px rgba(245, 158, 11, 0); }
+}
+
 .pa-actions {
   display: grid;
   gap: 0.5rem;
   grid-template-columns: 1fr 1fr;
 }
-
-.pa-action-form { display: contents; margin: 0; }
 
 .pa-action {
   background: var(--accent);
@@ -1239,8 +1279,6 @@ body.portal-app {
   padding: 0.7rem 0.5rem;
   width: 100%;
 }
-
-.pa-action.is-accent { background: var(--warn); }
 
 .pa-voucher {
   display: flex;

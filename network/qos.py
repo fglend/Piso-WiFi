@@ -5,6 +5,7 @@ and its filters use prio == class id so removing one device's filters cannot
 touch another's (the old code deleted every prio-1 filter at once).
 """
 import logging
+import re
 
 from network.command import run_cmd
 
@@ -29,6 +30,13 @@ class QoSManager:
         self.logger = logger
         # mac -> {'class_id': int, 'ip': str}
         self._clients = {}
+        # mac -> {'download_bytes': int, 'upload_bytes': int}, folded in from
+        # a client's tc counters each time its class is torn down. set_limit()
+        # always deletes-and-recreates a device's class on reconnect,
+        # bandwidth change or pause/resume, which zeroes tc's own counters -
+        # banking them here first is what keeps get_usage() monotonic across
+        # those churns for as long as this process keeps running.
+        self._usage_totals = {}
 
     def setup(self):
         """(Re)initialize root qdiscs. Wipes all client classes."""
@@ -62,6 +70,7 @@ class QoSManager:
                  'flowid', f'1:{GAME_CLASS_ID}'])
 
         self._clients.clear()
+        self._usage_totals.clear()
         self.logger.info("QoS root qdiscs initialized (game lane on 1:%d)",
                          GAME_CLASS_ID)
 
@@ -111,11 +120,49 @@ class QoSManager:
             self.logger.error(f"Error setting bandwidth limit for {mac_address}: {e}")
             return False
 
+    def _read_counters(self, class_id):
+        """(download_bytes, upload_bytes) tc has counted so far for one class.
+        Best-effort: a parse miss (class gone, tc quirk) reads as zero rather
+        than raising, since this must never block a limit change."""
+        download_output = run_cmd(
+            ['tc', '-s', 'class', 'show', 'dev', self.ap_interface,
+             'classid', f'1:{class_id}'], ignore_errors=True)
+        upload_output = run_cmd(
+            ['tc', '-s', 'filter', 'show', 'dev', self.ap_interface,
+             'parent', 'ffff:', 'prio', str(class_id)], ignore_errors=True)
+        return self._parse_sent_bytes(download_output), self._parse_sent_bytes(upload_output)
+
+    @staticmethod
+    def _parse_sent_bytes(output):
+        if not isinstance(output, str):
+            return 0
+        match = re.search(r'Sent (\d+) bytes', output)
+        return int(match.group(1)) if match else 0
+
+    def get_usage(self, mac_address):
+        """Cumulative (download_bytes, upload_bytes) tc has counted for this
+        device since it was first tracked in this process, including whatever
+        was banked from earlier class re-creations."""
+        totals = dict(self._usage_totals.get(
+            mac_address, {'download_bytes': 0, 'upload_bytes': 0}))
+        client = self._clients.get(mac_address)
+        if client:
+            download, upload = self._read_counters(client['class_id'])
+            totals['download_bytes'] += download
+            totals['upload_bytes'] += upload
+        return totals
+
     def remove_limit(self, mac_address):
-        client = self._clients.pop(mac_address, None)
+        client = self._clients.get(mac_address)
         if not client:
             return True
         class_id = client['class_id']
+        download, upload = self._read_counters(class_id)
+        banked = self._usage_totals.setdefault(
+            mac_address, {'download_bytes': 0, 'upload_bytes': 0})
+        banked['download_bytes'] += download
+        banked['upload_bytes'] += upload
+        del self._clients[mac_address]
         try:
             run_cmd(['tc', 'filter', 'del', 'dev', self.ap_interface, 'parent', '1:',
                      'prio', str(class_id)], ignore_errors=True)

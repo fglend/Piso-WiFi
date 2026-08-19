@@ -109,6 +109,28 @@
     </form>
     {% endif %}
 
+    {# Pulled out of the utility grid below: buried among four same-weight
+       tiles, customers routinely missed this and let paid time run out
+       needlessly. A full-width, distinctly-colored button is much harder
+       to scroll past unnoticed. #}
+    {% if device.paused %}
+    <form action="{{ url_for('portal.resume') }}" method="POST" class="pa-pause-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="pa-pause-cta is-resume">
+            <span class="pa-pause-cta-icon" aria-hidden="true">&#9658;</span>
+            Resume my time
+        </button>
+    </form>
+    {% elif pause_enabled and device.time_balance > 0 %}
+    <form action="{{ url_for('portal.pause') }}" method="POST" class="pa-pause-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="pa-pause-cta">
+            <span class="pa-pause-cta-icon" aria-hidden="true">&#10074;&#10074;</span>
+            Pause my time
+        </button>
+    </form>
+    {% endif %}
+
     <div class="pa-actions">
         <button type="button" class="pa-action" data-sheet="sheet-rates">WiFi Rates</button>
         <button type="button" class="pa-action" data-sheet="sheet-sessions">Sessions</button>
@@ -117,19 +139,7 @@
         {% else %}
         <button type="button" class="pa-action" data-sheet="sheet-help">Help</button>
         {% endif %}
-        {% if device.paused %}
-        <form action="{{ url_for('portal.resume') }}" method="POST" class="pa-action-form">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <button type="submit" class="pa-action is-accent">Resume my time</button>
-        </form>
-        {% elif pause_enabled and device.time_balance > 0 %}
-        <form action="{{ url_for('portal.pause') }}" method="POST" class="pa-action-form">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <button type="submit" class="pa-action">Pause my time</button>
-        </form>
-        {% else %}
         <button type="button" class="pa-action" data-sheet="sheet-plan">My Plan</button>
-        {% endif %}
     </div>
 
     <form action="{{ url_for('portal.redeem') }}" method="POST" class="pa-voucher">

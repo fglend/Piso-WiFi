@@ -351,6 +351,12 @@ class NetworkController:
             return False
         return self.qos.remove_limit(mac_address)
 
+    def get_usage(self, mac_address):
+        """Cumulative download/upload bytes tc has counted for this device."""
+        if not is_valid_mac(mac_address):
+            return None
+        return self.qos.get_usage(mac_address)
+
     # --- lifecycle ----------------------------------------------------------
 
     def reconcile(self, active_users):
