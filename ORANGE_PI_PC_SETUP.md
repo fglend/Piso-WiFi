@@ -595,7 +595,138 @@ ssh -L 5000:127.0.0.1:5000 your-admin-user@ORANGE_PI_UPLINK_IP
 Then open `http://127.0.0.1:5000/login` locally. This tunnel protects the
 admin credentials in transit; it does not add TLS to customer portal traffic.
 
-## 12. Validate the network-only installation
+## 12. Watchdog auto-restart (auto-heal)
+
+The Orange Pi runs a single Gunicorn worker (Section 11) because it owns the
+firewall, AP/network, and metering singletons — a second worker would
+duplicate and fight over them. That single-worker design has a blind spot:
+if a shell-out to `iptables`/`ip`/`tc` ever hangs (a contended xtables lock
+from concurrent firewall writes, or a wedged driver on the USB uplink), the
+metering thread can freeze while the process itself stays alive. Nothing
+crashes, so `Restart=on-failure` in the `pisowifi.service` unit never fires
+— the symptom is exactly "the portal stops working and needs a manual
+restart," with no clean crash to point at.
+
+This section installs an external watchdog: a systemd timer that checks a
+`/health` endpoint every minute and restarts the service if it is
+unresponsive or reports its metering loop has stalled. It only applies if
+the running checkout includes the health-check code — verify that first.
+
+### 12.1 Confirm the checkout has the health-check code
+
+```bash
+grep -q "def is_healthy" /opt/piso_wifi/time_manager.py && echo "OK: heartbeat present" || echo "MISSING: update the checkout first"
+grep -q "/health" /opt/piso_wifi/main.py && echo "OK: /health route present" || echo "MISSING: update the checkout first"
+```
+
+If either check reports missing, pull/deploy the current code first
+(Section 18 covers the update procedure), then continue.
+
+### 12.2 Install curl
+
+```bash
+sudo apt update
+sudo apt install -y curl
+```
+
+### 12.3 Cap journald so the watchdog's own logging never wears the SD card
+
+The watchdog logs each check via `logger` (journald). Keep the journal
+RAM-backed and size-capped so that logging — and the once-a-minute timer
+activity itself — never touches the microSD card:
+
+```bash
+sudo mkdir -p /etc/systemd/journald.conf.d
+sudo tee /etc/systemd/journald.conf.d/pisowifi.conf > /dev/null << 'EOF'
+[Journal]
+Storage=volatile
+RuntimeMaxUse=50M
+EOF
+sudo systemctl restart systemd-journald
+```
+
+### 12.4 Install the watchdog script
+
+The script lives in the repo at `/opt/piso_wifi/watchdog.sh`. Install it to
+a stable system path:
+
+```bash
+sudo install -m 755 /opt/piso_wifi/watchdog.sh /usr/local/sbin/pisowifi-watchdog.sh
+```
+
+It curls `http://127.0.0.1:5000/health`, and only acts on a non-200
+response. To avoid repeatedly restarting (and repeatedly touching the SQLite
+database on the SD card) if the service stays broken across a restart, it
+enforces a 5-minute cooldown between watchdog-triggered restarts, tracked in
+`/run` (tmpfs — RAM, not the SD card).
+
+### 12.5 Create the watchdog systemd units
+
+```bash
+sudoedit /etc/systemd/system/pisowifi-watchdog.service
+```
+
+```ini
+[Unit]
+Description=PISO WIFI health check
+After=pisowifi.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/pisowifi-watchdog.sh
+```
+
+```bash
+sudoedit /etc/systemd/system/pisowifi-watchdog.timer
+```
+
+```ini
+[Unit]
+Description=Run the PISO WIFI health check every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+
+[Install]
+WantedBy=timers.target
+```
+
+### 12.6 Enable and verify
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now pisowifi-watchdog.timer
+sudo systemctl list-timers pisowifi-watchdog.timer --no-pager
+curl -s http://127.0.0.1:5000/health
+```
+
+The `curl` response must be `{"status": "ok", ...}` with HTTP 200. A `503`
+or connection failure means the application itself needs attention before
+the watchdog can help — check `sudo journalctl -u pisowifi -n 100 --no-pager`.
+
+### 12.7 Prove the auto-restart actually works
+
+Simulate a stuck/unresponsive service without touching real customer state:
+
+```bash
+sudo systemctl stop pisowifi
+# wait up to ~1 minute for the timer to fire
+sudo journalctl -t pisowifi-watchdog -n 20 --no-pager
+sudo systemctl status pisowifi --no-pager
+```
+
+The watchdog log should show the failed health check and a restart, and
+`pisowifi` should be `active (running)` again without anyone touching the
+board. If a coin claim is active during this test, confirm the relay was
+released by the stop and stays released until a new claim starts.
+
+Add `/usr/local/sbin/pisowifi-watchdog.sh`,
+`/etc/systemd/system/pisowifi-watchdog.service`, and
+`/etc/systemd/system/pisowifi-watchdog.timer` to the backup list in
+Section 18.
+
+## 13. Validate the network-only installation
 
 On the Orange Pi:
 
@@ -643,7 +774,7 @@ On a phone connected to the external AP:
 If clients receive an address from the external router instead of the Orange
 Pi, return to Section 9 and disable DHCP/router mode on the external AP.
 
-## 13. Commission GPIO and relay without the acceptor
+## 14. Commission GPIO and relay without the acceptor
 
 Keep the coin acceptor's 12 V wire disconnected from relay NO during this
 test.
@@ -712,7 +843,7 @@ test.
 For an active-high module, use `COINSLOT_RELAY_ACTIVE_HIGH=true`; its OFF
 state is GPIO `0`. Verify electrically rather than assuming the setting.
 
-## 14. Connect and commission the coin acceptor
+## 15. Connect and commission the coin acceptor
 
 1. Power everything off.
 2. Complete the fused COM/NO power wiring and the conditioned PD14 (pin 12)
@@ -745,7 +876,7 @@ state is GPIO `0`. Verify electrically rather than assuming the setting.
 pulses are spaced 50 ms or less, lower it carefully after measuring the pulse
 train; too little debounce can count electrical noise as money.
 
-## 15. End-to-end acceptance checklist
+## 16. End-to-end acceptance checklist
 
 - [ ] USB uplink receives an ISP-router address and default route.
 - [ ] Client LAN is `192.168.4.1/24` on the Orange Pi only.
@@ -766,7 +897,7 @@ train; too little debounce can count electrical noise as money.
 - [ ] Reboot restores the database and reconciles active user access.
 - [ ] Enclosure, fuse, insulation, cooling, and strain relief are complete.
 
-## 16. Troubleshooting
+## 17. Troubleshooting
 
 ### Service refuses to start in production
 
@@ -846,7 +977,7 @@ watchdog/timer if guaranteed release after any failure is required.
 - Compare pulse spacing with `COINSLOT_DEBOUNCE_MS`.
 - Improve grounding, shielding, or optoisolation if noise is present.
 
-## 17. Backup and maintenance
+## 18. Backup and maintenance
 
 Back up at least:
 
@@ -855,6 +986,10 @@ Back up at least:
 /opt/piso_wifi/config/piso_wifi.db
 /opt/piso_wifi/static/uploads/
 /etc/systemd/system/pisowifi.service
+/usr/local/sbin/pisowifi-watchdog.sh
+/etc/systemd/system/pisowifi-watchdog.service
+/etc/systemd/system/pisowifi-watchdog.timer
+/etc/systemd/journald.conf.d/pisowifi.conf
 /etc/netplan/
 ```
 
