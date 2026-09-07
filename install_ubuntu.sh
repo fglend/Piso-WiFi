@@ -36,7 +36,8 @@ apt-get install -y --no-install-recommends \
     wireless-tools \
     sqlite3 \
     conntrack \
-    rfkill
+    rfkill \
+    curl
 
 # Create application directory
 APP_DIR="/opt/piso_wifi"
@@ -146,10 +147,40 @@ TimeoutStopSec=15
 WantedBy=multi-user.target
 EOF
 
+# Watchdog: curls /health every minute and restarts pisowifi if the process
+# is unresponsive or its metering loop has stalled. Restart=always alone only
+# catches a process that exits; this catches one that is still running but
+# wedged.
+echo -e "${GREEN}Installing watchdog...${NC}"
+install -m 755 /opt/piso_wifi/watchdog.sh /usr/local/sbin/pisowifi-watchdog.sh
+
+cat > /etc/systemd/system/pisowifi-watchdog.service << EOF
+[Unit]
+Description=PISO WIFI health check
+After=pisowifi.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/pisowifi-watchdog.sh
+EOF
+
+cat > /etc/systemd/system/pisowifi-watchdog.timer << EOF
+[Unit]
+Description=Run the PISO WIFI health check every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+
+[Install]
+WantedBy=timers.target
+EOF
+
 # Enable and start service
 systemctl daemon-reload
 systemctl enable pisowifi
 systemctl start pisowifi
+systemctl enable --now pisowifi-watchdog.timer
 
 echo -e "${GREEN}Installation complete!${NC}"
 echo -e "Access the PISO WIFI system at: http://192.168.4.1:5000"

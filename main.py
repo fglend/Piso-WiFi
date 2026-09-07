@@ -2,9 +2,9 @@ import atexit
 import logging
 import os
 
-from flask import Flask, url_for
+from flask import Flask, abort, jsonify, url_for
 
-from auth import init_csrf
+from auth import init_csrf, request_is_loopback
 from config import load_settings
 
 logging.basicConfig(
@@ -78,6 +78,27 @@ def create_app(services=None, start_time_manager=True, manage_hardware=True, set
     init_csrf(app)
     app.register_blueprint(portal_bp)
     app.register_blueprint(admin_bp)
+
+    @app.route('/health')
+    def health():
+        """Liveness probe for an external watchdog (see watchdog.sh).
+
+        Checks the metering thread's own heartbeat rather than just "did
+        this request get a worker" - a single gunicorn worker can accept
+        this request fine while the meter thread is wedged in a hung
+        shell-out, which is exactly the silent-freeze failure mode this
+        exists to catch.
+        """
+        if not request_is_loopback():
+            abort(404)
+        tm = app.extensions['piso'].time_manager
+        healthy = tm.is_healthy()
+        body = {
+            'status': 'ok' if healthy else 'unhealthy',
+            'time_manager_running': tm.running,
+            'last_heartbeat': tm.last_heartbeat,
+        }
+        return jsonify(body), 200 if healthy else 503
 
     return app
 
