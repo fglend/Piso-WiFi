@@ -7,7 +7,11 @@ import sqlite3
 import string
 from contextlib import contextmanager
 from ipaddress import AddressValueError, IPv4Address
+from dataclasses import replace
 from types import SimpleNamespace
+
+from loyalty import compute_points
+from points_store import PointsStoreMixin
 
 
 MAC_ADDRESS_RE = re.compile(r'^(?:[0-9A-F]{2}:){5}[0-9A-F]{2}$')
@@ -20,7 +24,7 @@ DISCONNECT_CONFIRMATION_POLLS = 2
 LAST_SEEN_REFRESH_SECONDS = 60
 
 
-class UserManager:
+class UserManager(PointsStoreMixin):
     def __init__(self, db_path='config/piso_wifi.db'):
         self.db_path = db_path
         self.logger = logging.getLogger(__name__)
@@ -315,6 +319,8 @@ class UserManager:
                 c, 'users', 'download_bytes', 'INTEGER NOT NULL DEFAULT 0')
             self._add_column_if_missing(
                 c, 'users', 'upload_bytes', 'INTEGER NOT NULL DEFAULT 0')
+
+            self._init_points_schema(c)
 
             # Seed plans
             c.execute('''INSERT OR IGNORE INTO plans (name, download_kbps, upload_kbps)
@@ -786,7 +792,9 @@ class UserManager:
 
     # --- balance / time -----------------------------------------------------
 
-    def add_time(self, mac_address, amount, minutes, source='cash'):
+    def add_time(self, mac_address, amount, minutes, source='cash', points=0):
+        """Credit minutes (and any loyalty points they earned) in one
+        transaction, so a crash can never record one without the other."""
         conn = self._connect()
         c = conn.cursor()
         try:
@@ -815,6 +823,8 @@ class UserManager:
 
             c.execute('INSERT INTO transactions (user_id, amount, minutes, source) VALUES (?, ?, ?, ?)',
                       (user_id, amount, minutes, source))
+            self._award_points(conn, mac_address, points, source,
+                               ref=str(c.lastrowid))
 
             conn.commit()
             self.logger.info(f"Added {minutes} minutes for MAC {mac_address} ({source})")
@@ -879,7 +889,8 @@ class UserManager:
 
     # --- duration passes ------------------------------------------------
 
-    def grant_duration(self, mac_address, days, pausable=True, source='voucher'):
+    def grant_duration(self, mac_address, days, pausable=True, source='voucher',
+                       points=0, points_ref=None):
         """Give a device a pass valid for `days` from now.
 
         Stacking extends an unexpired pass rather than truncating it. The
@@ -930,6 +941,7 @@ class UserManager:
                          '(user_id, amount, minutes, source) VALUES '
                          '((SELECT id FROM users WHERE mac_address = ?), 0, 0, ?)',
                          (mac_address, source))
+            self._award_points(conn, mac_address, points, source, points_ref)
             out.result = deadline
 
         if out.result:
@@ -1073,6 +1085,7 @@ class UserManager:
                         WHERE id = ?
                     ''', (source['id'],))
 
+                self._move_points(conn, from_mac, to_mac)
                 out.result = minutes
 
         if out.result is not None:
@@ -1306,8 +1319,12 @@ class UserManager:
         finally:
             conn.close()
 
-    def redeem_voucher(self, code, mac_address):
+    def redeem_voucher(self, code, mac_address, points_rules=None):
         """Redeem a voucher for a device.
+
+        A paid voucher (price > 0) earns loyalty points under `points_rules`
+        (a loyalty.PointsRules); free vouchers and calls without rules earn
+        nothing.
 
         Returns a dict describing what was granted, or None when the code is
         unknown or already used:
@@ -1316,7 +1333,7 @@ class UserManager:
         conn = self._connect()
         try:
             row = conn.execute(
-                'SELECT id, minutes, duration_days, pausable FROM vouchers '
+                'SELECT id, minutes, duration_days, pausable, price FROM vouchers '
                 'WHERE code = ? AND redeemed_at IS NULL',
                 (code.strip().upper(),)).fetchone()
             if not row:
@@ -1335,19 +1352,36 @@ class UserManager:
         finally:
             conn.close()
 
+        points = self._voucher_points(row, points_rules)
+
         if row['duration_days']:
             deadline = self.grant_duration(
-                mac_address, row['duration_days'], bool(row['pausable']))
+                mac_address, row['duration_days'], bool(row['pausable']),
+                points=points, points_ref=code.strip().upper())
             if deadline:
                 return {'minutes': self.check_balance(mac_address),
                         'duration_days': row['duration_days'],
                         'expires_at': self.get_expiry(mac_address)}
             return None
 
-        if self.add_time(mac_address, 0, row['minutes'], source='voucher'):
+        if self.add_time(mac_address, 0, row['minutes'], source='voucher',
+                         points=points):
             return {'minutes': row['minutes'], 'duration_days': None,
                     'expires_at': None}
         return None
+
+    @staticmethod
+    def _voucher_points(row, points_rules):
+        """Points a paid voucher earns. A duration pass always earns on its
+        price: its span is calendar time, and counting a 30-day pass as
+        43,200 bought minutes would dwarf what the same money earns in coins.
+        """
+        price = row['price'] or 0
+        if not points_rules or price <= 0:
+            return 0
+        if row['duration_days']:
+            return compute_points(price, 0, replace(points_rules, earn_mode='peso'))
+        return compute_points(price, row['minutes'], points_rules)
 
     def set_voucher_pausable(self, code, pausable):
         """Correct the pause permission on an already-created voucher.

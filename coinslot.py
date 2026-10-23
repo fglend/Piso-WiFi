@@ -15,6 +15,7 @@ import select
 import threading
 import time
 
+from loyalty import compute_points, rules_from_settings
 from pricing import compute_minutes
 
 logger = logging.getLogger(__name__)
@@ -152,9 +153,12 @@ class CoinslotService:
             self._claim = {'mac': mac_address,
                            'expires': now + self.settings.coinslot_claim_timeout,
                            'pulses': 0, 'pesos': 0, 'minutes_added': 0.0,
+                           'points_added': 0.0,
                            'last_pulse': now,
                            # rate table snapshot: one session, one price list
-                           'rates': self.user_manager.get_rates()}
+                           'rates': self.user_manager.get_rates(),
+                           # ...and one points rule
+                           'points_rules': rules_from_settings(self.settings)}
             self._set_relay(True)
             self.logger.info(f"Coinslot claimed by {mac_address}")
             return self.settings.coinslot_claim_timeout
@@ -191,6 +195,7 @@ class CoinslotService:
                 'seconds_left': int(claim['expires'] - now),
                 'pesos_inserted': claim['pesos'],
                 'minutes_added': round(claim['minutes_added'], 1),
+                'points_added': round(claim['points_added'], 1),
             }
 
     # --- pulse handling ---------------------------------------------------
@@ -249,8 +254,11 @@ class CoinslotService:
             minutes = (compute_minutes(total_pesos, claim['rates'], fallback)
                        - compute_minutes(old_total, claim['rates'], fallback))
             claim['minutes_added'] += minutes
+            points = compute_points(delta, minutes, claim['points_rules'])
+            claim['points_added'] += points
             mac = claim['mac']
-        if self.user_manager.add_time(mac, delta, minutes, source='coin'):
+        if self.user_manager.add_time(mac, delta, minutes, source='coin',
+                                      points=points):
             self.network_controller.unblock_mac(mac)
             info = self.user_manager.get_device_info(mac)
             if info:

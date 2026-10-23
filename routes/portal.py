@@ -9,6 +9,7 @@ from flask import (Blueprint, abort, current_app, flash, jsonify, redirect,
 
 from auth import (is_locked_out, record_login_failure, record_login_success,
                   request_is_loopback, verify_admin)
+from loyalty import rules_from_settings
 from post_formatting import render_post_description
 from pricing import format_duration
 
@@ -74,6 +75,11 @@ def index():
         # A pass sold as non-pausable overrides the shop-wide setting
         pause_enabled=(svc.settings.allow_manual_pause
                        and (mac is None or svc.user_manager.is_pausable(mac))),
+        points_enabled=svc.settings.points_enabled,
+        points=(svc.user_manager.get_points(mac)['points']
+                if mac and svc.settings.points_enabled else 0),
+        points_rules=rules_from_settings(svc.settings),
+        points_redeem_label=format_duration(svc.settings.points_redeem_minutes),
         coin_minutes_per_peso=svc.settings.minutes_per_peso,
         coin_claim_timeout=svc.settings.coinslot_claim_timeout,
         portal_title=svc.settings.portal_title,
@@ -147,6 +153,7 @@ def logout():
 @portal_bp.route('/redeem', methods=['POST'])
 def redeem():
     svc = _services()
+    svc.refresh_runtime_settings()
     mac = _client_mac()
     if not mac:
         flash('Could not identify your device. Reconnect to the WiFi and try again.', 'error')
@@ -157,7 +164,9 @@ def redeem():
         flash('Please enter a voucher code', 'error')
         return redirect(url_for('portal.index'))
 
-    granted = svc.user_manager.redeem_voucher(code, mac)
+    rules = (rules_from_settings(svc.settings)
+             if svc.settings.points_enabled else None)
+    granted = svc.user_manager.redeem_voucher(code, mac, points_rules=rules)
     if granted is None:
         flash('Invalid or already used voucher code', 'error')
     else:
@@ -212,12 +221,53 @@ def coin_done():
 @portal_bp.route('/coin_status')
 def coin_status():
     svc = _services()
+    svc.refresh_runtime_settings()
     if not svc.coinslot:
         return jsonify({'enabled': False})
     mac = _client_mac()
     balance = svc.user_manager.check_balance(mac) if mac else 0
-    return jsonify({'enabled': True, 'balance': balance,
-                    **svc.coinslot.status(mac)})
+    payload = {'enabled': True, 'balance': balance, **svc.coinslot.status(mac)}
+    if svc.settings.points_enabled:
+        payload['points'] = svc.user_manager.get_points(mac)['points'] if mac else 0
+    return jsonify(payload)
+
+
+@portal_bp.route('/points/redeem', methods=['POST'])
+def redeem_points():
+    """Convert this device's loyalty points into time at the admin's rate.
+
+    The MAC comes from the requesting IP, never the form, so a device can
+    only spend its own points; redeem_points() is a single conditional
+    update, so a double-tapped button spends once.
+    """
+    svc = _services()
+    svc.refresh_runtime_settings()
+    if not svc.settings.points_enabled:
+        flash('Points are not available on this network.', 'error')
+        return redirect(url_for('portal.index'))
+    mac = _client_mac()
+    if not mac:
+        flash('Could not identify your device. Reconnect to the WiFi and try again.', 'error')
+        return redirect(url_for('portal.index'))
+
+    rules = rules_from_settings(svc.settings)
+    result = svc.user_manager.redeem_points(
+        mac, rules.redeem_cost, rules.redeem_minutes)
+    if result is None:
+        flash(f'You need {rules.redeem_cost:g} points to redeem.', 'error')
+        return redirect(url_for('portal.index'))
+
+    info = svc.user_manager.get_device_info(mac)
+    # A paused customer stays paused: the time is banked, and Resume is what
+    # turns the internet back on.
+    if info and not info['paused']:
+        svc.network_controller.unblock_mac(mac)
+        svc.network_controller.set_bandwidth_limit(
+            mac, info['download_limit'], info['upload_limit'])
+    flash(f"Redeemed {rules.redeem_cost:g} points for "
+          f"{format_duration(result['minutes'])}. "
+          f"{int(result['points_left'])} points left.", 'success')
+    return redirect(url_for('portal.index'))
 
 
 @portal_bp.route('/request_upgrade', methods=['POST'])

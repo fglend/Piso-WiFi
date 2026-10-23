@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+
+{% block title %}Points{% endblock %}
+
+{% block content %}
+<div class="row-between mb-3">
+    <div>
+        <h1 class="mb-0">Loyalty Points</h1>
+        <p class="muted mb-0">
+            Customers earn points on coins and paid vouchers, saved to their
+            device&rsquo;s MAC address, and swap them for free time on the portal.
+            Points never expire.
+        </p>
+    </div>
+    <span class="badge {{ 'text-bg-success' if rules.enabled else 'text-bg-secondary' }}">
+        {{ 'Enabled' if rules.enabled else 'Disabled' }}
+    </span>
+</div>
+
+<div class="grid grid-3 mb-4">
+    <div class="metric metric-hero">
+        <div class="metric-label">Points Outstanding</div>
+        <div class="metric-value">{{ '%g'|format(summary.outstanding|round(1)) }}</div>
+        <div class="muted small">
+            {{ summary.accounts }} device{{ '' if summary.accounts == 1 else 's' }}
+            &middot; worth about
+            {{ '%g'|format((summary.outstanding / rules.redeem_cost * rules.redeem_minutes)|round(0)) }} min
+        </div>
+    </div>
+    <div class="metric">
+        <div class="metric-label">Earned (30 days)</div>
+        <div class="metric-value">{{ '%g'|format(summary.earned_30d|round(1)) }}</div>
+    </div>
+    <div class="metric">
+        <div class="metric-label">Redeemed (30 days)</div>
+        <div class="metric-value">{{ '%g'|format(summary.redeemed_30d|round(1)) }}</div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-head">
+        <h2 class="mb-0">Rules</h2>
+        <div class="muted small">
+            Changes apply to the next coin session; a session in progress keeps the rules it started with.
+        </div>
+    </div>
+    <div class="card-body">
+        <form action="{{ url_for('points_admin.save_points_settings') }}" method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <div class="setting-toggle mb-3">
+                <input id="points_enabled" name="points_enabled" type="checkbox"
+                       value="1" {% if rules.enabled %}checked{% endif %}>
+                <div>
+                    <label for="points_enabled" class="mb-0">Enable loyalty points</label>
+                    <div class="muted small mt-2">
+                        When off, nothing is earned and the portal hides points.
+                        Existing balances are kept.
+                    </div>
+                </div>
+            </div>
+            <div class="form-row">
+                <div style="max-width: 200px;">
+                    <label for="points_earn_mode">Earn points</label>
+                    <select id="points_earn_mode" name="points_earn_mode">
+                        <option value="peso" {% if rules.earn_mode == 'peso' %}selected{% endif %}>Per peso paid</option>
+                        <option value="minute" {% if rules.earn_mode == 'minute' %}selected{% endif %}>Per minute bought</option>
+                    </select>
+                </div>
+                <div style="max-width: 160px;">
+                    <label for="points_per_peso">Points per &#8369;1</label>
+                    <input type="number" id="points_per_peso" name="points_per_peso"
+                           min="0" max="1000" step="any" value="{{ '%g'|format(rules.per_peso) }}" required>
+                </div>
+                <div style="max-width: 160px;">
+                    <label for="points_per_minute">Points per minute</label>
+                    <input type="number" id="points_per_minute" name="points_per_minute"
+                           min="0" max="100" step="any" value="{{ '%g'|format(rules.per_minute) }}" required>
+                </div>
+            </div>
+            <div class="form-row mt-2">
+                <div style="max-width: 160px;">
+                    <label for="points_redeem_cost">Redeem cost (pts)</label>
+                    <input type="number" id="points_redeem_cost" name="points_redeem_cost"
+                           min="1" step="any" value="{{ '%g'|format(rules.redeem_cost) }}" required>
+                </div>
+                <div style="max-width: 160px;">
+                    <label for="points_redeem_minutes">Gives (minutes)</label>
+                    <input type="number" id="points_redeem_minutes" name="points_redeem_minutes"
+                           min="1" max="525600" step="any" value="{{ '%g'|format(rules.redeem_minutes) }}" required>
+                </div>
+                <button type="submit" class="btn btn-primary">Save Rules</button>
+            </div>
+            <p class="muted small mt-2 mb-0">
+                Currently: {{ '%g'|format(rules.redeem_cost) }} points = {{ redeem_label }}.
+                Per-minute mode rewards bigger tiers, since they carry bonus minutes.
+            </p>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-head">
+        <h2 class="mb-0">Adjust a Device</h2>
+        <div class="muted small">Use a negative number to remove points. A balance never goes below zero.</div>
+    </div>
+    <div class="card-body">
+        <form action="{{ url_for('points_admin.adjust_points') }}" method="POST" class="form-row">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <div style="max-width: 220px;">
+                <label for="adjust-mac">MAC address</label>
+                <input type="text" id="adjust-mac" name="mac_address" value="{{ mac_filter }}"
+                       placeholder="AA:BB:CC:DD:EE:FF" required>
+            </div>
+            <div style="max-width: 140px;">
+                <label for="adjust-delta">Points</label>
+                <input type="number" id="adjust-delta" name="delta" step="any" placeholder="e.g. 20" required>
+            </div>
+            <div style="max-width: 240px;">
+                <label for="adjust-note">Note</label>
+                <input type="text" id="adjust-note" name="note" maxlength="120" placeholder="optional">
+            </div>
+            <button type="submit" class="btn btn-primary">Apply</button>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-head row-between">
+        <div>
+            <h2 class="mb-0">Ledger</h2>
+            {% if account %}
+            <div class="muted small">
+                {{ mac_filter }}: {{ '%g'|format(account.points|round(1)) }} points
+                ({{ '%g'|format(account.lifetime_earned|round(1)) }} earned lifetime)
+            </div>
+            {% endif %}
+        </div>
+        <form action="{{ url_for('points_admin.points_page') }}" method="GET" class="form-row mb-0">
+            <input type="text" name="mac" value="{{ mac_filter }}" placeholder="Filter by MAC"
+                   aria-label="Filter by MAC address">
+            <button type="submit" class="btn btn-ghost btn-sm">Filter</button>
+            {% if mac_filter %}<a href="{{ url_for('points_admin.points_page') }}" class="btn btn-ghost btn-sm">Clear</a>{% endif %}
+        </form>
+    </div>
+    <div class="table-wrap">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>When</th>
+                    <th>Device</th>
+                    <th>Reason</th>
+                    <th class="text-end">Change</th>
+                    <th class="text-end">Balance</th>
+                    <th>Ref</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in ledger %}
+                <tr>
+                    <td class="small">{{ row.created_at }}</td>
+                    <td><code>{{ row.mac_address }}</code></td>
+                    <td>{{ row.reason|replace('_', ' ') }}</td>
+                    <td class="text-end">{{ '%+g'|format(row.delta|round(2)) }}</td>
+                    <td class="text-end">{{ '%g'|format(row.balance_after|round(2)) }}</td>
+                    <td class="small muted">{{ row.ref or '' }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="6" class="text-center muted">No points activity yet.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

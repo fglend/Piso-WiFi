@@ -596,7 +596,14 @@ def transfer_balance():
 
     minutes = svc.user_manager.transfer_balance(from_mac, to_mac)
     if minutes is None:
-        flash('No remaining time to transfer from that device', 'error')
+        # No time left, but loyalty points outlive the balance that earned
+        # them - a rotated MAC should still get those back.
+        points = svc.user_manager.transfer_points(from_mac, to_mac)
+        if points:
+            flash(f'No time to transfer; moved {points:g} points to {to_mac}',
+                  'success')
+        else:
+            flash('No remaining time to transfer from that device', 'error')
         return redirect(url_for('admin.dashboard'))
 
     svc.network_controller.unblock_mac(to_mac)

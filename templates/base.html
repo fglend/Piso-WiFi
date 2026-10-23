@@ -56,6 +56,8 @@
                        {% if request.endpoint == 'admin.vouchers' %}class="active"{% endif %}>Vouchers</a>
                     <a href="{{ url_for('admin.transactions') }}"
                        {% if request.endpoint == 'admin.transactions' %}class="active"{% endif %}>Transactions</a>
+                    <a href="{{ url_for('points_admin.points_page') }}"
+                       {% if request.endpoint and request.endpoint.startswith('points_admin.') %}class="active"{% endif %}>Points</a>
                 </div>
                 <div class="sidebar-group">
                     <div class="sidebar-group-title">Content</div>

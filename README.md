@@ -23,6 +23,10 @@ A Python-based PISO WIFI management system designed for Orange Pi One that enabl
 - Security hardening: admin auth on all management routes, CSRF protection, MAC/input
   validation, shell-free command execution, production refuses default credentials
 - Automatic access blocking when time expires
+- Loyalty points per MAC address (`/admin/points`, off by default): earned on coins
+  and paid vouchers, either per peso paid or per minute bought, and redeemed on the
+  portal for free time at an admin-set rate. Points never expire and survive the
+  idle-device purge and admin balance transfers
 - Transaction history and reporting
 - Containerized development environment
 - Production-ready deployment for Orange Pi One
@@ -259,6 +263,9 @@ Copy `.env.example` to `.env` and adjust. Key options:
   `MANAGE_HARDWARE=false`.
 - `AP_SSID`: WiFi network name
 - `RATE_MINUTES_PER_PESO`: Minutes granted per peso (default: 5)
+- `POINTS_ENABLED`, `POINTS_EARN_MODE` (`peso`/`minute`), `POINTS_PER_PESO`,
+  `POINTS_PER_MINUTE`, `POINTS_REDEEM_COST`, `POINTS_REDEEM_MINUTES`: first-run
+  defaults for loyalty points; the `/admin/points` page overrides them at runtime
 - `PORTAL_TITLE` / `PORTAL_SUBTITLE`: Portal copy defaults; admins can
   override these in the dashboard at runtime.
 - `DASHBOARD_REFRESH_SECONDS`: Admin dashboard live refresh interval.

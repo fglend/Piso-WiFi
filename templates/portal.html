@@ -100,6 +100,11 @@
         <button type="button" class="pa-chip" data-sheet="sheet-help">
             <span>Keep my time</span><span class="pa-chip-caret">&rsaquo;</span>
         </button>
+        {% if points_enabled %}
+        <button type="button" class="pa-chip" data-sheet="sheet-points">
+            <span><span id="points-chip-value">{{ points|int }}</span> pts</span><span class="pa-chip-caret">&rsaquo;</span>
+        </button>
+        {% endif %}
     </div>
 
     {% if coinslot_enabled %}
@@ -239,6 +244,42 @@
     </div>
 </div>
 
+{% if points_enabled %}
+<div class="pa-sheet" id="sheet-points" hidden role="dialog" aria-modal="true"
+     aria-labelledby="sheet-points-title">
+    <div class="pa-sheet-backdrop" data-sheet-close></div>
+    <div class="pa-sheet-card">
+        <div class="pa-sheet-head">
+            <h2 id="sheet-points-title">My Points</h2>
+            <button type="button" class="pa-sheet-close" data-sheet-close aria-label="Close">&times;</button>
+        </div>
+        <div class="pa-points-balance" data-points-balance="{{ points|int }}">
+            <span id="points-balance-value">{{ points|int }}</span> <small>points</small>
+        </div>
+        <p class="muted small">
+            {% if points_rules.earn_mode == 'minute' %}
+            Earn {{ '%g'|format(points_rules.per_minute) }} point{{ '' if points_rules.per_minute == 1 else 's' }} for every minute you buy
+            {% else %}
+            Earn {{ '%g'|format(points_rules.per_peso) }} point{{ '' if points_rules.per_peso == 1 else 's' }} for every &#8369;1 you pay
+            {% endif %}
+            with coins or paid vouchers.
+        </p>
+        <form action="{{ url_for('portal.redeem_points') }}" method="POST" class="mb-0">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="pa-primary" id="points-redeem-button"
+                    data-points-cost="{{ '%g'|format(points_rules.redeem_cost) }}"
+                    {% if points < points_rules.redeem_cost %}disabled{% endif %}>
+                Redeem {{ '%g'|format(points_rules.redeem_cost) }} pts for {{ points_redeem_label }}
+            </button>
+        </form>
+        <p class="muted small mb-0 mt-2">
+            Points are saved to this device&rsquo;s Wi-Fi address and never expire.
+            Keep <em>Private Wi-Fi Address</em> set to <em>Fixed</em> so you don&rsquo;t lose them.
+        </p>
+    </div>
+</div>
+{% endif %}
+
 <div class="pa-sheet" id="sheet-help" hidden role="dialog" aria-modal="true"
      aria-labelledby="sheet-help-title">
     <div class="pa-sheet-backdrop" data-sheet-close></div>
@@ -350,6 +391,12 @@
                     <div class="metric-label">Time added</div>
                     <div class="coin-stat-value" id="coin-modal-minutes">0 min</div>
                 </div>
+                {% if points_enabled %}
+                <div class="coin-stat">
+                    <div class="metric-label">Points earned</div>
+                    <div class="coin-stat-value" id="coin-modal-points">0</div>
+                </div>
+                {% endif %}
             </div>
 
             <div class="flash flash-success mb-3 d-none" id="coin-modal-alert">
@@ -610,6 +657,22 @@
         closeModal();
     }
 
+    function updatePoints(status) {
+        if (status.points === undefined) return;
+        var whole = Math.floor(Number(status.points || 0));
+        ['points-chip-value', 'points-balance-value'].forEach(function (id) {
+            var el = document.getElementById(id);
+            if (el) el.textContent = whole;
+        });
+        var earned = document.getElementById('coin-modal-points');
+        if (earned) {
+            earned.textContent = Number(status.points_added || 0)
+                .toLocaleString(undefined, { maximumFractionDigits: 1 });
+        }
+        var redeem = document.getElementById('points-redeem-button');
+        if (redeem) redeem.disabled = Number(status.points || 0) < Number(redeem.dataset.pointsCost);
+    }
+
     function setActive(status) {
         hadSession = true;
         var pesos = Number(status.pesos_inserted || 0);
@@ -630,6 +693,7 @@
         });
         pesosInserted.textContent = pesoText;
         minutesAdded.textContent = minuteText;
+        updatePoints(status);
         if (window.pisoSetBalance) {
             window.pisoSetBalance(status.balance);
         } else {

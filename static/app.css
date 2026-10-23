@@ -1177,6 +1177,13 @@ body.portal-app {
 
 .pa-tile-value { font-size: 1rem; font-weight: 700; margin-top: 0.15rem; }
 .pa-tile-value.is-small { font-size: 0.75rem; }
+.pa-points-balance {
+    font-size: 2rem;
+    font-weight: 800;
+    line-height: 1.1;
+    margin: 0.25rem 0 0.5rem;
+}
+.pa-points-balance small { font-size: 0.9rem; font-weight: 600; opacity: 0.7; }
 
 .pa-chips {
   display: grid;

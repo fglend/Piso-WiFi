@@ -21,7 +21,7 @@ def create_app(services=None, start_time_manager=True, manage_hardware=True, set
     manage_hardware=False); when omitted, real services are constructed and
     the time manager starts.
     """
-    from routes import admin_bp, portal_bp
+    from routes import admin_bp, points_admin_bp, portal_bp
 
     owns_services = services is None
     if owns_services:
@@ -78,6 +78,7 @@ def create_app(services=None, start_time_manager=True, manage_hardware=True, set
     init_csrf(app)
     app.register_blueprint(portal_bp)
     app.register_blueprint(admin_bp)
+    app.register_blueprint(points_admin_bp)
 
     return app
 

@@ -8,6 +8,7 @@ import logging
 import time
 
 from config import is_valid_color, load_settings
+from loyalty import EARN_MODES
 from network_controller import NetworkController
 from time_manager import TimeManager
 from user_manager import UserManager
@@ -19,6 +20,19 @@ def _as_bool(value):
     """Parse a stored app_settings flag. Module level, not a method: the
     settings helpers are bound onto plain namespaces in tests."""
     return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _bounded_float(value, fallback, minimum, maximum):
+    """Stored number if finite and within range, else the fallback - one bad
+    app_settings row or .env value must not 500 the portal or let a zero
+    redeem cost reach a division."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    if number != number or not minimum <= number <= maximum:
+        return fallback
+    return number
 
 
 def _safe_color(value, fallback):
@@ -107,6 +121,12 @@ class Services:
             'ssh_whitelist_macs': self.settings.ssh_whitelist_macs,
             'dos_protection_enabled': '1' if self.settings.dos_protection_enabled else '0',
             'content_filter_enabled': '1' if self.settings.content_filter_enabled else '0',
+            'points_enabled': '1' if self.settings.points_enabled else '0',
+            'points_earn_mode': self.settings.points_earn_mode,
+            'points_per_peso': str(self.settings.points_per_peso),
+            'points_per_minute': str(self.settings.points_per_minute),
+            'points_redeem_cost': str(self.settings.points_redeem_cost),
+            'points_redeem_minutes': str(self.settings.points_redeem_minutes),
         }
 
     def refresh_runtime_settings(self):
@@ -138,6 +158,18 @@ class Services:
         self.settings.ssh_whitelist_macs = values['ssh_whitelist_macs']
         self.settings.dos_protection_enabled = _as_bool(values['dos_protection_enabled'])
         self.settings.content_filter_enabled = _as_bool(values['content_filter_enabled'])
+        self.settings.points_enabled = _as_bool(values['points_enabled'])
+        mode = str(values['points_earn_mode']).strip().lower()
+        self.settings.points_earn_mode = mode if mode in EARN_MODES else 'peso'
+        # Same ranges the /admin/points form enforces.
+        self.settings.points_per_peso = _bounded_float(
+            values['points_per_peso'], 1.0, 0, 1000)
+        self.settings.points_per_minute = _bounded_float(
+            values['points_per_minute'], 0.1, 0, 100)
+        self.settings.points_redeem_cost = _bounded_float(
+            values['points_redeem_cost'], 100.0, 1, 1_000_000)
+        self.settings.points_redeem_minutes = _bounded_float(
+            values['points_redeem_minutes'], 60.0, 1, 525600)
         return values
 
     def _init_network_controller(self, manage_hardware, max_retries=3):

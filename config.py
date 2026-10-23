@@ -212,6 +212,22 @@ class Settings:
     # they are leaving can deliberately stop their own clock first.
     allow_manual_pause: bool = field(
         default_factory=lambda: _env_bool('ALLOW_MANUAL_PAUSE', True))
+    # Loyalty points (see loyalty.py). Off until the operator enables it on the
+    # settings page; like the other runtime settings, the database wins after
+    # first run. earn_mode is 'peso' (per peso paid) or 'minute' (per minute
+    # bought). Redemption converts redeem_cost points into redeem_minutes.
+    points_enabled: bool = field(
+        default_factory=lambda: _env_bool('POINTS_ENABLED', False))
+    points_earn_mode: str = field(
+        default_factory=lambda: os.getenv('POINTS_EARN_MODE', 'peso').strip().lower())
+    points_per_peso: float = field(
+        default_factory=lambda: _env_float('POINTS_PER_PESO', 1.0))
+    points_per_minute: float = field(
+        default_factory=lambda: _env_float('POINTS_PER_MINUTE', 0.1))
+    points_redeem_cost: float = field(
+        default_factory=lambda: _env_float('POINTS_REDEEM_COST', 100.0))
+    points_redeem_minutes: float = field(
+        default_factory=lambda: _env_float('POINTS_REDEEM_MINUTES', 60.0))
     # Spent devices idle this long are deleted, so the rows left behind by
     # rotated randomized MACs don't accumulate forever. A purged device is
     # simply unknown again (zero balance); set to 0 to keep every row.
