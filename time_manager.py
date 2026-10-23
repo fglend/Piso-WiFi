@@ -30,7 +30,6 @@ class TimeManager:
         self.device_retention_hours = settings.device_retention_hours
         self.running = False
         self.thread = None
-        self.last_heartbeat = None
         self._next_purge_at = 0.0
         self._next_offline_sweep_at = 0.0
         self._next_expiry_sync_at = 0.0
@@ -81,11 +80,6 @@ class TimeManager:
 
     def _run(self):
         while self.running:
-            # Recorded before the work, not after: a hung shell-out inside
-            # _check_and_deduct_time (e.g. a wedged iptables call) would
-            # otherwise never update this, and /health is exactly what is
-            # supposed to catch that kind of silent freeze.
-            self.last_heartbeat = time.time()
             try:
                 self._check_and_deduct_time()
                 self._purge_stale_devices()
@@ -93,16 +87,6 @@ class TimeManager:
             except Exception as e:
                 self.logger.error(f"Error in time manager run loop: {e}")
                 time.sleep(1)  # Prevent tight loop on error
-
-    def is_healthy(self, max_age_seconds=120):
-        """False if the meter loop hasn't ticked recently - it may be
-        blocked in a shell-out that ignored its own timeout, or the thread
-        may have died outright. Used by the /health endpoint."""
-        if not self.running:
-            return False
-        if self.last_heartbeat is None:
-            return True  # not started yet / just booted
-        return (time.time() - self.last_heartbeat) < max_age_seconds
 
     def _check_and_deduct_time(self):
         try:
