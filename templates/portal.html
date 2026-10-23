@@ -102,7 +102,7 @@
         </button>
         {% if points_enabled %}
         <button type="button" class="pa-chip" data-sheet="sheet-points">
-            <span><span id="points-chip-value">{{ points|int }}</span> pts</span><span class="pa-chip-caret">&rsaquo;</span>
+            <span><span id="points-chip-value">{{ '%g'|format(points|round(1, 'floor')) }}</span> pts</span><span class="pa-chip-caret">&rsaquo;</span>
         </button>
         {% endif %}
     </div>
@@ -253,8 +253,8 @@
             <h2 id="sheet-points-title">My Points</h2>
             <button type="button" class="pa-sheet-close" data-sheet-close aria-label="Close">&times;</button>
         </div>
-        <div class="pa-points-balance" data-points-balance="{{ points|int }}">
-            <span id="points-balance-value">{{ points|int }}</span> <small>points</small>
+        <div class="pa-points-balance" data-points-balance="{{ '%g'|format(points) }}">
+            <span id="points-balance-value">{{ '%g'|format(points) }}</span> <small>points</small>
         </div>
         <p class="muted small">
             {% if points_rules.earn_mode == 'minute' %}
@@ -264,14 +264,41 @@
             {% endif %}
             with coins or paid vouchers.
         </p>
-        <form action="{{ url_for('portal.redeem_points') }}" method="POST" class="mb-0">
+        <form action="{{ url_for('portal.redeem_points') }}" method="POST" class="mb-0"
+              id="points-redeem-form" data-minutes-per-point="{{ '%g'|format(minutes_per_point) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <label for="points-amount" class="small">
+                Points to redeem
+                <span class="muted">({{ '%g'|format(points_rules.redeem_cost) }} pts = {{ points_redeem_label }})</span>
+            </label>
+            <div class="pa-voucher">
+                <input type="number" name="points" id="points-amount"
+                       min="0.01" max="{{ '%g'|format(points) }}" step="0.01"
+                       value="{{ '%g'|format(points) if points > 0 else '' }}"
+                       inputmode="decimal" required {% if points <= 0 %}disabled{% endif %}>
+            </div>
+            <p class="muted small" id="points-preview" aria-live="polite"></p>
             <button type="submit" class="pa-primary" id="points-redeem-button"
-                    data-points-cost="{{ '%g'|format(points_rules.redeem_cost) }}"
-                    {% if points < points_rules.redeem_cost %}disabled{% endif %}>
-                Redeem {{ '%g'|format(points_rules.redeem_cost) }} pts for {{ points_redeem_label }}
-            </button>
+                    {% if points <= 0 %}disabled{% endif %}>Redeem for time</button>
         </form>
+        <script>
+        (function () {
+            var form = document.getElementById('points-redeem-form');
+            var input = document.getElementById('points-amount');
+            var preview = document.getElementById('points-preview');
+            var rate = Number(form.dataset.minutesPerPoint) || 0;
+            function render() {
+                var pts = Number(input.value);
+                if (!(pts > 0)) { preview.textContent = ''; return; }
+                var mins = Math.round(pts * rate * 100) / 100;
+                preview.textContent = '= ' + (mins >= 60
+                    ? (Math.round(mins / 6) / 10) + ' hours'
+                    : mins + ' minutes') + ' of WiFi time';
+            }
+            input.addEventListener('input', render);
+            render();
+        })();
+        </script>
         <p class="muted small mb-0 mt-2">
             Points are saved to this device&rsquo;s Wi-Fi address and never expire.
             Keep <em>Private Wi-Fi Address</em> set to <em>Fixed</em> so you don&rsquo;t lose them.
@@ -669,8 +696,11 @@
             earned.textContent = Number(status.points_added || 0)
                 .toLocaleString(undefined, { maximumFractionDigits: 1 });
         }
+        var amount = document.getElementById('points-amount');
         var redeem = document.getElementById('points-redeem-button');
-        if (redeem) redeem.disabled = Number(status.points || 0) < Number(redeem.dataset.pointsCost);
+        var have = Number(status.points || 0);
+        if (amount) { amount.max = have; amount.disabled = have <= 0; }
+        if (redeem) redeem.disabled = have <= 0;
     }
 
     function setActive(status) {

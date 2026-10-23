@@ -4,11 +4,15 @@ Side-effect free, like pricing.py. The coinslot snapshots a PointsRules at
 claim time (as it does the rate table) so a settings change mid-session can't
 split one customer's coins across two earning rules.
 
+Redemption is proportional: any amount, any time, each point worth
+redeem_minutes / redeem_cost minutes (100 pts = 60 min by default).
+
 Earn modes:
     peso   - points_per_peso for every peso paid
     minute - points_per_minute for every minute bought, so larger tiers (which
              carry bonus minutes) earn proportionally more
 """
+import math
 from dataclasses import dataclass
 
 EARN_MODES = ('peso', 'minute')
@@ -46,3 +50,21 @@ def compute_points(pesos, minutes, rules):
     else:
         return 0
     return max(0.0, earned)
+
+
+def minutes_per_point(rules):
+    if rules.redeem_cost <= 0:
+        return 0
+    return rules.redeem_minutes / rules.redeem_cost
+
+
+def points_to_minutes(points, rules):
+    """Minutes that `points` buy at the redeem rate; 0 for any amount that is
+    not a positive finite number."""
+    try:
+        points = float(points)
+    except (TypeError, ValueError):
+        return 0
+    if not math.isfinite(points) or points <= 0:
+        return 0
+    return round(points * minutes_per_point(rules), 2)

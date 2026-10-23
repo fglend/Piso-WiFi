@@ -79,19 +79,21 @@
             </div>
             <div class="form-row mt-2">
                 <div style="max-width: 160px;">
-                    <label for="points_redeem_cost">Redeem cost (pts)</label>
+                    <label for="points_redeem_cost">Redeem rate: points</label>
                     <input type="number" id="points_redeem_cost" name="points_redeem_cost"
                            min="1" step="any" value="{{ '%g'|format(rules.redeem_cost) }}" required>
                 </div>
                 <div style="max-width: 160px;">
-                    <label for="points_redeem_minutes">Gives (minutes)</label>
+                    <label for="points_redeem_minutes">= minutes</label>
                     <input type="number" id="points_redeem_minutes" name="points_redeem_minutes"
                            min="1" max="525600" step="any" value="{{ '%g'|format(rules.redeem_minutes) }}" required>
                 </div>
                 <button type="submit" class="btn btn-primary">Save Rules</button>
             </div>
             <p class="muted small mt-2 mb-0">
-                Currently: {{ '%g'|format(rules.redeem_cost) }} points = {{ redeem_label }}.
+                Currently: {{ '%g'|format(rules.redeem_cost) }} points = {{ redeem_label }}, so each point is worth
+                {{ '%g'|format((rules.redeem_minutes / rules.redeem_cost)|round(2)) }} min. Customers redeem any
+                amount they type, at any time - there is no minimum.
                 Per-minute mode rewards bigger tiers, since they carry bonus minutes.
             </p>
         </form>

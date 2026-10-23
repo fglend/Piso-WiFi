@@ -9,7 +9,7 @@ from flask import (Blueprint, abort, current_app, flash, jsonify, redirect,
 
 from auth import (is_locked_out, record_login_failure, record_login_success,
                   request_is_loopback, verify_admin)
-from loyalty import rules_from_settings
+from loyalty import minutes_per_point, points_to_minutes, rules_from_settings
 from post_formatting import render_post_description
 from pricing import format_duration
 
@@ -80,6 +80,7 @@ def index():
                 if mac and svc.settings.points_enabled else 0),
         points_rules=rules_from_settings(svc.settings),
         points_redeem_label=format_duration(svc.settings.points_redeem_minutes),
+        minutes_per_point=minutes_per_point(rules_from_settings(svc.settings)),
         coin_minutes_per_peso=svc.settings.minutes_per_peso,
         coin_claim_timeout=svc.settings.coinslot_claim_timeout,
         portal_title=svc.settings.portal_title,
@@ -232,6 +233,21 @@ def coin_status():
     return jsonify(payload)
 
 
+MAX_REDEEM_POINTS = 1_000_000
+
+
+def _form_points():
+    """The typed redeem amount, or 0 for anything that isn't a sane number
+    (the caller treats 0 as "nothing to redeem")."""
+    try:
+        amount = float(request.form.get('points', ''))
+    except (TypeError, ValueError):
+        return 0
+    if amount != amount or not 0 < amount <= MAX_REDEEM_POINTS:
+        return 0
+    return amount
+
+
 @portal_bp.route('/points/redeem', methods=['POST'])
 def redeem_points():
     """Convert this device's loyalty points into time at the admin's rate.
@@ -251,10 +267,17 @@ def redeem_points():
         return redirect(url_for('portal.index'))
 
     rules = rules_from_settings(svc.settings)
-    result = svc.user_manager.redeem_points(
-        mac, rules.redeem_cost, rules.redeem_minutes)
+    # Any amount, any time: the customer types how many points to spend and
+    # each one is worth the admin's redeem rate (100 pts = 60 min default).
+    amount = round(_form_points(), 2)
+    minutes = points_to_minutes(amount, rules)
+    if minutes <= 0:
+        flash('Enter how many points to redeem.', 'error')
+        return redirect(url_for('portal.index'))
+    result = svc.user_manager.redeem_points(mac, amount, minutes)
     if result is None:
-        flash(f'You need {rules.redeem_cost:g} points to redeem.', 'error')
+        have = svc.user_manager.get_points(mac)['points']
+        flash(f'You only have {have:g} points.', 'error')
         return redirect(url_for('portal.index'))
 
     info = svc.user_manager.get_device_info(mac)
@@ -264,9 +287,9 @@ def redeem_points():
         svc.network_controller.unblock_mac(mac)
         svc.network_controller.set_bandwidth_limit(
             mac, info['download_limit'], info['upload_limit'])
-    flash(f"Redeemed {rules.redeem_cost:g} points for "
+    flash(f"Redeemed {amount:g} points for "
           f"{format_duration(result['minutes'])}. "
-          f"{int(result['points_left'])} points left.", 'success')
+          f"{result['points_left']:g} points left.", 'success')
     return redirect(url_for('portal.index'))
 
 

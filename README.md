@@ -25,7 +25,8 @@ A Python-based PISO WIFI management system designed for Orange Pi One that enabl
 - Automatic access blocking when time expires
 - Loyalty points per MAC address (`/admin/points`, off by default): earned on coins
   and paid vouchers, either per peso paid or per minute bought, and redeemed on the
-  portal for free time at an admin-set rate. Points never expire and survive the
+  portal for free time - any amount, any time - at an admin-set rate
+  (default 100 points = 60 minutes). Points never expire and survive the
   idle-device purge and admin balance transfers
 - Transaction history and reporting
 - Containerized development environment
